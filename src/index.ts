@@ -27,6 +27,8 @@ const CHILD_IDS_KEY = 'subPages.childIds';
 
 const DEFAULT_ROOT_TITLE = 'Untitled page';
 const DEFAULT_CHILD_TITLE = 'Untitled sub-page';
+const RECENT_CHANGE_TIME_TTL = 10 * 60 * 1000;
+const SETTLED_REFRESH_DELAYS = [1500, 4000];
 
 type PanelSortMode = 'recentGroups' | 'manual' | 'title';
 
@@ -97,6 +99,9 @@ let knownSelectedNoteId: string | null = null;
 let hasKnownSelectedNoteId = false;
 let lastPostedSelectedNoteId: string | null = null;
 let hasPostedSelectedNoteId = false;
+let settledRefreshTimers: any[] = [];
+let panelStateRevision = 0;
+const recentChangeTimes = new Map<string, number>();
 
 joplin.plugins.register({
   onStart: async () => {
@@ -280,17 +285,22 @@ async function registerRefreshEvents(): Promise<void> {
     }
   });
 
-  await joplin.workspace.onNoteChange(async () => {
-    schedulePanelRefresh(650);
-    scheduleSelectionRefresh();
+  await joplin.workspace.onNoteChange(async (event: any) => {
+    await handleNoteChangeEvent(event);
+  });
+
+  await joplin.workspace.onNoteContentChange(async (event: any) => {
+    await handleNoteChangeEvent(event);
   });
 
   await joplin.workspace.onSyncComplete(async () => {
+    markPanelStateChanged();
     schedulePanelRefresh(1000);
   });
 
   await joplin.settings.onChange(async (event) => {
     if (event.keys.includes(SETTING_PANEL_SORT_MODE)) {
+      markPanelStateChanged();
       schedulePanelRefresh();
     }
   });
@@ -313,6 +323,18 @@ async function handlePanelMessage(message: any): Promise<any> {
     }
 
     if (name === 'refresh') {
+      return panelStateResponse();
+    }
+
+    if (name === 'stateIfChanged') {
+      const revision = typeof message?.revision === 'number' ? message.revision : -1;
+      if (revision === panelStateRevision) {
+        return {
+          ok: true,
+          revision: panelStateRevision,
+        };
+      }
+
       return panelStateResponse();
     }
 
@@ -382,6 +404,7 @@ async function handlePanelMessage(message: any): Promise<any> {
 async function panelStateResponse(message?: string): Promise<any> {
   const response: any = {
     ok: true,
+    revision: panelStateRevision,
     state: await buildPanelState(),
   };
   if (message) response.message = message;
@@ -396,6 +419,15 @@ function schedulePanelRefresh(delay = 150): void {
       console.error('Sub-Pages panel refresh failed', error);
     });
   }, delay);
+}
+
+function scheduleSettledPanelRefreshes(): void {
+  settledRefreshTimers.forEach((timer) => clearTimeout(timer));
+  settledRefreshTimers = SETTLED_REFRESH_DELAYS.map((delay) => {
+    return setTimeout(() => {
+      schedulePanelRefresh(0);
+    }, delay);
+  });
 }
 
 function scheduleSelectionRefresh(delay = 75, selectedNoteIdOverride?: string | null): void {
@@ -437,8 +469,19 @@ async function refreshPanel(force = false): Promise<void> {
   const state = await buildPanelState();
   joplin.views.panels.postMessage(panelHandle, {
     name: 'state',
+    revision: panelStateRevision,
     state,
   });
+}
+
+async function handleNoteChangeEvent(event: any): Promise<void> {
+  const noteId = changedNoteIdFromEvent(event) ?? await selectedNoteId();
+  if (noteId) markNoteRecentlyChanged(noteId);
+  markPanelStateChanged();
+
+  schedulePanelRefresh(200);
+  scheduleSettledPanelRefreshes();
+  scheduleSelectionRefresh();
 }
 
 async function panelVisible(): Promise<boolean> {
@@ -581,6 +624,22 @@ function metadataItemCountFor(metaMap: Map<string, HierarchyMeta>): number {
     if (meta.childIds.length) count += 1;
   }
   return count;
+}
+
+function markNoteRecentlyChanged(noteId: string): void {
+  pruneRecentChangeTimes();
+  recentChangeTimes.set(noteId, Date.now());
+}
+
+function pruneRecentChangeTimes(): void {
+  const cutoff = Date.now() - RECENT_CHANGE_TIME_TTL;
+  for (const [noteId, changedTime] of recentChangeTimes.entries()) {
+    if (changedTime < cutoff) recentChangeTimes.delete(noteId);
+  }
+}
+
+function markPanelStateChanged(): void {
+  panelStateRevision += 1;
 }
 
 function sortTree(nodes: TreeNode[], parentId: string | null, sortMode: PanelSortMode, metaMap: Map<string, HierarchyMeta>): void {
@@ -1064,6 +1123,11 @@ function selectedNoteIdFromEvent(event: any): string | null | undefined {
   return undefined;
 }
 
+function changedNoteIdFromEvent(event: any): string | null {
+  const id = event?.id ?? event?.noteId ?? event?.note?.id;
+  return typeof id === 'string' && id ? id : null;
+}
+
 function rememberSelectedNoteId(noteId: string | null): void {
   knownSelectedNoteId = noteId;
   hasKnownSelectedNoteId = true;
@@ -1450,7 +1514,9 @@ function sameIds(a: string[], b: string[]): boolean {
 }
 
 function noteTime(note: NoteSummary): number {
-  return note.user_updated_time || note.updated_time || 0;
+  const persistedTime = note.user_updated_time || note.updated_time || 0;
+  const recentChangeTime = recentChangeTimes.get(note.id) ?? 0;
+  return Math.max(persistedTime, recentChangeTime);
 }
 
 function numberValue(value: any): number {

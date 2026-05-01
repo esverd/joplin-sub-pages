@@ -6,6 +6,8 @@
   let statusText = '';
   let busy = false;
   let selectionSyncInFlight = false;
+  let stateRevision = 0;
+  let stateSyncInFlight = false;
 
   const icons = {
     chevronDown: '<svg viewBox="0 0 16 16"><path d="m4 6 4 4 4-4"/></svg>',
@@ -40,6 +42,7 @@
     if (!response) return;
 
     if (response.state) {
+      if (typeof response.revision === 'number') stateRevision = response.revision;
       currentState = response.state;
       statusText = response.message || '';
       render();
@@ -78,6 +81,23 @@
       })
       .finally(() => {
         selectionSyncInFlight = false;
+      });
+  }
+
+  function syncPanelState() {
+    if (!currentState || stateSyncInFlight) return;
+    if (!api || typeof api.postMessage !== 'function') return;
+
+    stateSyncInFlight = true;
+    Promise.resolve(api.postMessage({ name: 'stateIfChanged', revision: stateRevision }))
+      .then((response) => {
+        applyResponse(response);
+      })
+      .catch(() => {
+        // Manual refresh remains available if the host rejects a background check.
+      })
+      .finally(() => {
+        stateSyncInFlight = false;
       });
   }
 
@@ -408,6 +428,7 @@
       }
 
       if (message.name !== 'state') return;
+      if (typeof message.revision === 'number') stateRevision = message.revision;
       currentState = message.state;
       statusText = '';
       render();
@@ -423,6 +444,7 @@
   }, 5000);
 
   window.setInterval(syncSelectedNote, 1000);
+  window.setInterval(syncPanelState, 1500);
 
   post('ready');
 }());
