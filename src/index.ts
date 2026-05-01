@@ -433,7 +433,6 @@ async function postSelectedNoteState(selectedNoteIdOverride?: string | null): Pr
 async function refreshPanel(force = false): Promise<void> {
   if (!panelHandle) return;
   if (!panelReady) return;
-  if (!force && !await panelVisible()) return;
 
   const state = await buildPanelState();
   joplin.views.panels.postMessage(panelHandle, {

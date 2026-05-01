@@ -189,11 +189,6 @@
       main.appendChild(element('span', { className: 'sub-pages-spacer' }));
     }
 
-    const actions = element('span', { className: 'sub-pages-row-actions' });
-    actions.appendChild(iconButton('createChild', node.id, 'plus', 'Create child page', false, 'sub-pages-icon-button'));
-    actions.appendChild(renderNodeMenu(node, hasChildren));
-    main.appendChild(actions);
-
     const title = actionButton('openNote', node.id, node.title, 'Open note');
     title.classList.add('sub-pages-note-title');
     if (node.isTodo) title.classList.add(node.todoCompleted ? 'is-done' : 'is-todo');
@@ -207,6 +202,11 @@
       main.appendChild(element('span', { className: 'sub-pages-badge', title: node.repairReason }, ['Needs repair']));
     }
     row.appendChild(main);
+
+    const actions = element('span', { className: 'sub-pages-row-actions' });
+    actions.appendChild(iconButton('createChild', node.id, 'plus', 'Create child page', false, 'sub-pages-icon-button'));
+    actions.appendChild(renderNodeMenu(node, hasChildren));
+    row.appendChild(actions);
 
     container.appendChild(row);
 

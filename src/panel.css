@@ -8,7 +8,9 @@ body,
   box-sizing: border-box;
   height: 100%;
   margin: 0;
+  max-width: 100vw;
   min-width: 0;
+  width: 100vw;
 }
 
 *,
@@ -27,11 +29,11 @@ body {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  max-width: 100%;
+  max-width: 100vw;
   min-width: 0;
   overflow-x: hidden;
   padding: 8px;
-  width: 100%;
+  width: 100vw;
 }
 
 .sub-pages-loading,
@@ -120,6 +122,7 @@ body {
 
 .sub-pages-row {
   align-items: center;
+  border-bottom: 1px solid var(--joplin-divider-color, rgba(127, 127, 127, 0.16));
   border-radius: 4px;
   display: grid;
   gap: 4px;
@@ -272,17 +275,44 @@ body {
 }
 
 .sub-pages-row-actions {
-  justify-content: flex-start;
+  background: linear-gradient(90deg, transparent, var(--joplin-background-color, #fff) 12px);
+  justify-content: flex-end;
   opacity: 0;
+  padding-left: 14px;
+  pointer-events: none;
+  position: absolute;
+  right: 4px;
+  top: 50%;
+  transform: translateY(-50%);
   visibility: hidden;
-  width: 50px;
+  width: auto;
+  z-index: 4;
 }
 
 .sub-pages-row:hover .sub-pages-row-actions,
+.sub-pages-row.is-selected .sub-pages-row-actions,
 .sub-pages-row:focus-within .sub-pages-row-actions,
 .sub-pages-row.has-open-menu .sub-pages-row-actions {
   opacity: 1;
+  pointer-events: auto;
   visibility: visible;
+}
+
+.sub-pages-row:hover .sub-pages-note-title,
+.sub-pages-row.is-selected .sub-pages-note-title,
+.sub-pages-row:focus-within .sub-pages-note-title,
+.sub-pages-row.has-open-menu .sub-pages-note-title {
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 58px), transparent);
+  mask-image: linear-gradient(to right, #000 calc(100% - 58px), transparent);
+}
+
+.sub-pages-row:hover .sub-pages-row-actions,
+.sub-pages-row.has-open-menu .sub-pages-row-actions {
+  background: linear-gradient(90deg, transparent, var(--joplin-background-color-hover3, #f2f2f2) 12px);
+}
+
+.sub-pages-row.is-selected .sub-pages-row-actions {
+  background: linear-gradient(90deg, transparent, var(--joplin-selected-color, #e4eaf5) 12px);
 }
 
 .sub-pages-badge {
@@ -310,7 +340,7 @@ body {
   min-width: 172px;
   padding: 4px;
   position: absolute;
-  left: 0;
+  right: 0;
   top: 26px;
   z-index: 10;
 }
