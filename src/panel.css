@@ -79,13 +79,38 @@ body {
 }
 
 .sub-pages-row {
-  align-items: center;
   border-radius: 4px;
-  display: flex;
+  display: grid;
   gap: 4px;
   min-height: 28px;
   min-width: 0;
-  padding: 2px 4px 2px calc(4px + var(--depth) * 16px);
+  padding: 3px 4px 3px calc(6px + var(--depth) * 18px);
+  position: relative;
+}
+
+.sub-pages-row.is-child::before {
+  border-left: 1px solid var(--joplin-divider-color, rgba(127, 127, 127, 0.28));
+  bottom: -4px;
+  content: "";
+  left: calc(var(--depth) * 18px - 3px);
+  position: absolute;
+  top: -4px;
+}
+
+.sub-pages-row.is-child::after {
+  border-top: 1px solid var(--joplin-divider-color, rgba(127, 127, 127, 0.28));
+  content: "";
+  left: calc(var(--depth) * 18px - 3px);
+  position: absolute;
+  top: 14px;
+  width: 10px;
+}
+
+.sub-pages-row-main {
+  align-items: center;
+  display: flex;
+  gap: 4px;
+  min-width: 0;
 }
 
 .sub-pages-row:hover {
@@ -101,8 +126,8 @@ body {
 }
 
 .sub-pages-spacer {
-  flex: 0 0 22px;
-  height: 22px;
+  flex: 0 0 20px;
+  height: 20px;
 }
 
 .sub-pages-button {
@@ -115,6 +140,20 @@ body {
   font: inherit;
   min-height: 22px;
   padding: 1px 5px;
+}
+
+.sub-pages-icon-button {
+  min-width: 22px;
+  padding-left: 0;
+  padding-right: 0;
+  text-align: center;
+}
+
+.sub-pages-mini-button {
+  min-width: 28px;
+  padding-left: 3px;
+  padding-right: 3px;
+  text-align: center;
 }
 
 .sub-pages-button:hover:not(:disabled) {
@@ -136,6 +175,18 @@ body {
   white-space: nowrap;
 }
 
+.sub-pages-child-count {
+  border: 1px solid var(--joplin-divider-color, rgba(127, 127, 127, 0.3));
+  border-radius: 999px;
+  color: var(--joplin-color-faded, #666);
+  flex: 0 0 auto;
+  font-size: 10px;
+  line-height: 16px;
+  min-width: 18px;
+  padding: 0 4px;
+  text-align: center;
+}
+
 .sub-pages-note-title.is-todo::before {
   content: "[ ] ";
 }
@@ -150,13 +201,16 @@ body {
 }
 
 .sub-pages-row-actions {
-  opacity: 0.68;
+  display: none;
+  flex-wrap: wrap;
+  opacity: 1;
+  padding-left: 24px;
 }
 
 .sub-pages-row:hover .sub-pages-row-actions,
 .sub-pages-row.is-selected .sub-pages-row-actions,
 .sub-pages-row:focus-within .sub-pages-row-actions {
-  opacity: 1;
+  display: inline-flex;
 }
 
 .sub-pages-badge {

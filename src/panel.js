@@ -91,11 +91,11 @@
     header.appendChild(titleWrap);
 
     const actions = element('div', { className: 'sub-pages-header-actions' });
-    actions.appendChild(actionButton('createRoot', null, '+', 'Create root page'));
+    actions.appendChild(actionButton('createRoot', null, '+', 'Create root page', false, 'sub-pages-icon-button'));
     if (repairCount > 0) {
-      actions.appendChild(actionButton('repair', null, 'Repair', `Repair ${repairCount} metadata issue${repairCount === 1 ? '' : 's'}`));
+      actions.appendChild(actionButton('repair', null, 'Fix', `Repair ${repairCount} metadata issue${repairCount === 1 ? '' : 's'}`, false, 'sub-pages-icon-button'));
     }
-    actions.appendChild(actionButton('refresh', null, 'Refresh', 'Refresh tree'));
+    actions.appendChild(actionButton('refresh', null, 'R', 'Refresh tree', false, 'sub-pages-icon-button'));
     header.appendChild(actions);
 
     return header;
@@ -107,36 +107,45 @@
         'sub-pages-row',
         node.id === currentState.selectedNoteId ? 'is-selected' : '',
         node.repairReason ? 'needs-repair' : '',
+        depth > 0 ? 'is-child' : 'is-root',
+        hasNodeChildren(node) ? 'has-children' : '',
       ].filter(Boolean).join(' '),
       role: 'treeitem',
       style: `--depth: ${depth};`,
     });
 
-    const hasChildren = node.children && node.children.length > 0;
+    const hasChildren = hasNodeChildren(node);
     const isCollapsed = collapsedIds.has(node.id);
+    row.classList.add(isCollapsed ? 'is-collapsed' : 'is-expanded');
+    const main = element('div', { className: 'sub-pages-row-main' });
 
     if (hasChildren) {
-      row.appendChild(actionButton('toggle', node.id, isCollapsed ? '>' : 'v', isCollapsed ? 'Expand' : 'Collapse'));
+      main.appendChild(actionButton('toggle', node.id, isCollapsed ? '>' : 'v', isCollapsed ? 'Expand' : 'Collapse', false, 'sub-pages-icon-button sub-pages-toggle'));
     } else {
-      row.appendChild(element('span', { className: 'sub-pages-spacer' }));
+      main.appendChild(element('span', { className: 'sub-pages-spacer' }));
     }
 
     const title = actionButton('openNote', node.id, node.title, 'Open note');
     title.classList.add('sub-pages-note-title');
     if (node.isTodo) title.classList.add(node.todoCompleted ? 'is-done' : 'is-todo');
-    row.appendChild(title);
+    main.appendChild(title);
 
-    if (node.repairReason) {
-      row.appendChild(element('span', { className: 'sub-pages-badge', title: node.repairReason }, ['Needs repair']));
+    if (hasChildren) {
+      main.appendChild(element('span', { className: 'sub-pages-child-count', title: `${node.children.length} direct child page${node.children.length === 1 ? '' : 's'}` }, [String(node.children.length)]));
     }
 
+    if (node.repairReason) {
+      main.appendChild(element('span', { className: 'sub-pages-badge', title: node.repairReason }, ['Needs repair']));
+    }
+    row.appendChild(main);
+
     const actions = element('span', { className: 'sub-pages-row-actions' });
-    actions.appendChild(actionButton('createChild', node.id, '+', 'Create child page'));
-    actions.appendChild(actionButton('move', node.id, 'Move', 'Move under another page'));
-    actions.appendChild(actionButton('promote', node.id, 'Root', 'Promote to root', !node.parentId));
-    actions.appendChild(actionButton('moveUp', node.id, 'Up', 'Move up', !node.canMoveUp));
-    actions.appendChild(actionButton('moveDown', node.id, 'Down', 'Move down', !node.canMoveDown));
-    actions.appendChild(actionButton('unlink', node.id, 'Unlink', 'Unlink parent and direct children', !node.parentId && !hasChildren));
+    actions.appendChild(actionButton('createChild', node.id, '+', 'Create child page', false, 'sub-pages-icon-button'));
+    actions.appendChild(actionButton('move', node.id, '>', 'Move under another page', false, 'sub-pages-icon-button'));
+    actions.appendChild(actionButton('promote', node.id, 'R', 'Promote to root', !node.parentId, 'sub-pages-icon-button'));
+    actions.appendChild(actionButton('moveUp', node.id, 'Up', 'Move up', !node.canMoveUp, 'sub-pages-mini-button'));
+    actions.appendChild(actionButton('moveDown', node.id, 'Dn', 'Move down', !node.canMoveDown, 'sub-pages-mini-button'));
+    actions.appendChild(actionButton('unlink', node.id, 'X', 'Unlink parent and direct children', !node.parentId && !hasChildren, 'sub-pages-icon-button'));
     row.appendChild(actions);
 
     container.appendChild(row);
@@ -146,9 +155,13 @@
     }
   }
 
-  function actionButton(action, noteId, text, title, disabled) {
+  function hasNodeChildren(node) {
+    return !!(node.children && node.children.length);
+  }
+
+  function actionButton(action, noteId, text, title, disabled, extraClassName) {
     const button = element('button', {
-      className: 'sub-pages-button',
+      className: ['sub-pages-button', extraClassName || ''].filter(Boolean).join(' '),
       type: 'button',
       title: title || '',
       disabled: disabled ? 'disabled' : null,

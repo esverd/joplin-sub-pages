@@ -15,7 +15,8 @@ const COMMAND_PROMOTE_PAGE = 'subPages.promotePage';
 const COMMAND_UNLINK_PAGE = 'subPages.unlinkPage';
 const COMMAND_REPAIR_METADATA = 'subPages.repairMetadata';
 
-const PANEL_ID = 'com.codex.subPages.panel';
+const PLUGIN_ID = 'com.codex.subPages';
+const PANEL_ID = `${PLUGIN_ID}.panel`;
 const DIALOG_MOVE_PARENT = 'subPages.moveParentDialog';
 
 const SETTINGS_SECTION = 'subPages';
@@ -1038,7 +1039,16 @@ function inlineUserDataValue(userData: unknown, key: string): unknown {
   const data = parseInlineUserData(userData);
   if (!data) return undefined;
 
-  const value = data[key];
+  const pluginData = parseInlineUserData(data[PLUGIN_ID]);
+  if (pluginData) {
+    const pluginValue = inlineUserDataEntryValue(pluginData[key]);
+    if (pluginValue !== undefined) return pluginValue;
+  }
+
+  return inlineUserDataEntryValue(data[key]);
+}
+
+function inlineUserDataEntryValue(value: unknown): unknown {
   if (value && typeof value === 'object') {
     const record = value as Record<string, unknown>;
     if (Object.prototype.hasOwnProperty.call(record, 'value')) return record.value;
