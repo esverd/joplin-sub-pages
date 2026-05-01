@@ -113,6 +113,7 @@
       role: 'treeitem',
       style: `--depth: ${depth};`,
     });
+    row.dataset.noteId = node.id;
 
     const hasChildren = hasNodeChildren(node);
     const isCollapsed = collapsedIds.has(node.id);
@@ -141,11 +142,7 @@
 
     const actions = element('span', { className: 'sub-pages-row-actions' });
     actions.appendChild(actionButton('createChild', node.id, '+', 'Create child page', false, 'sub-pages-icon-button'));
-    actions.appendChild(actionButton('move', node.id, '>', 'Move under another page', false, 'sub-pages-icon-button'));
-    actions.appendChild(actionButton('promote', node.id, 'R', 'Promote to root', !node.parentId, 'sub-pages-icon-button'));
-    actions.appendChild(actionButton('moveUp', node.id, 'Up', 'Move up', !node.canMoveUp, 'sub-pages-mini-button'));
-    actions.appendChild(actionButton('moveDown', node.id, 'Dn', 'Move down', !node.canMoveDown, 'sub-pages-mini-button'));
-    actions.appendChild(actionButton('unlink', node.id, 'X', 'Unlink parent and direct children', !node.parentId && !hasChildren, 'sub-pages-icon-button'));
+    actions.appendChild(renderNodeMenu(node, hasChildren));
     row.appendChild(actions);
 
     container.appendChild(row);
@@ -157,6 +154,35 @@
 
   function hasNodeChildren(node) {
     return !!(node.children && node.children.length);
+  }
+
+  function renderNodeMenu(node, hasChildren) {
+    const details = element('details', { className: 'sub-pages-row-menu' });
+    const summary = element('summary', {
+      className: 'sub-pages-button sub-pages-icon-button sub-pages-menu-trigger',
+      title: 'More actions',
+    }, ['...']);
+    details.appendChild(summary);
+
+    const menu = element('div', { className: 'sub-pages-menu', role: 'menu' });
+    menu.appendChild(menuButton('openNote', node, 'Open'));
+    menu.appendChild(menuButton('createChild', node, 'Create child'));
+    menu.appendChild(element('div', { className: 'sub-pages-menu-separator' }));
+    menu.appendChild(menuButton('move', node, 'Move under...'));
+    menu.appendChild(menuButton('promote', node, 'Promote to root', !node.parentId));
+    menu.appendChild(menuButton('moveUp', node, 'Move up', !node.canMoveUp));
+    menu.appendChild(menuButton('moveDown', node, 'Move down', !node.canMoveDown));
+    menu.appendChild(element('div', { className: 'sub-pages-menu-separator' }));
+    menu.appendChild(menuButton('unlink', node, 'Unlink', !node.parentId && !hasChildren));
+
+    details.appendChild(menu);
+    return details;
+  }
+
+  function menuButton(action, node, text, disabled) {
+    const button = actionButton(action, node.id, text, text, disabled, 'sub-pages-menu-item');
+    button.setAttribute('role', 'menuitem');
+    return button;
   }
 
   function actionButton(action, noteId, text, title, disabled, extraClassName) {
@@ -205,12 +231,26 @@
 
   app.addEventListener('click', (event) => {
     const button = event.target.closest('button[data-action]');
+    if (!button) {
+      const rowMenu = event.target.closest('.sub-pages-row-menu');
+      if (event.target.closest('.sub-pages-menu-trigger')) {
+        event.preventDefault();
+        const shouldOpen = rowMenu && !rowMenu.open;
+        closeOpenMenus(rowMenu);
+        if (rowMenu) rowMenu.open = shouldOpen;
+      } else if (!rowMenu) {
+        closeOpenMenus();
+      }
+      return;
+    }
+
     if (!button || button.disabled) return;
 
     const action = button.dataset.action;
     const noteId = button.dataset.noteId || null;
 
     if (action === 'toggle' && noteId) {
+      closeOpenMenus();
       if (collapsedIds.has(noteId)) collapsedIds.delete(noteId);
       else collapsedIds.add(noteId);
       render();
@@ -221,8 +261,29 @@
 
     if (action === 'unlink' && !window.confirm('Unlink this page from its Sub-Pages hierarchy?')) return;
 
+    closeOpenMenus();
     post(action, noteId ? { noteId } : {});
   });
+
+  app.addEventListener('contextmenu', (event) => {
+    const row = event.target.closest('.sub-pages-row[data-note-id]');
+    if (!row) return;
+    event.preventDefault();
+    const details = row.querySelector('.sub-pages-row-menu');
+    if (!details) return;
+    closeOpenMenus(details);
+    details.open = true;
+  });
+
+  window.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') closeOpenMenus();
+  });
+
+  function closeOpenMenus(except) {
+    app.querySelectorAll('.sub-pages-row-menu[open]').forEach((menu) => {
+      if (menu !== except) menu.open = false;
+    });
+  }
 
   if (api && typeof api.onMessage === 'function') {
     api.onMessage((message) => {
