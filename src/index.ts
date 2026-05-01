@@ -82,6 +82,7 @@ interface PageResponse<T> {
 }
 
 let panelHandle: string | null = null;
+let panelReady = false;
 let refreshTimer: any = null;
 let selectionRefreshTimer: any = null;
 
@@ -243,6 +244,7 @@ async function registerMenus(): Promise<void> {
 }
 
 async function registerPanel(): Promise<void> {
+  panelReady = false;
   panelHandle = await joplin.views.panels.create(PANEL_ID);
   await joplin.views.panels.setHtml(panelHandle, `
     <div id="app" class="sub-pages-app">
@@ -272,15 +274,18 @@ async function handlePanelMessage(message: any): Promise<any> {
     const name = typeof message?.name === 'string' ? message.name : '';
     const noteId = typeof message?.noteId === 'string' ? message.noteId : '';
 
-    if (name === 'ready' || name === 'refresh') {
-      await refreshPanel(true);
-      return { ok: true };
+    if (name === 'ready') {
+      panelReady = true;
+      return panelStateResponse();
+    }
+
+    if (name === 'refresh') {
+      return panelStateResponse();
     }
 
     if (name === 'createRoot') {
       await createRootPage();
-      await refreshPanel(true);
-      return { ok: true };
+      return panelStateResponse();
     }
 
     if (name === 'openNote' && noteId) {
@@ -291,45 +296,38 @@ async function handlePanelMessage(message: any): Promise<any> {
 
     if (name === 'createChild' && noteId) {
       await createChildPage(noteId);
-      await refreshPanel(true);
-      return { ok: true };
+      return panelStateResponse();
     }
 
     if (name === 'move' && noteId) {
       await movePageWithDialog(noteId);
-      await refreshPanel(true);
-      return { ok: true };
+      return panelStateResponse();
     }
 
     if (name === 'promote' && noteId) {
       await promotePageToRoot(noteId);
-      await refreshPanel(true);
-      return { ok: true };
+      return panelStateResponse();
     }
 
     if (name === 'unlink' && noteId) {
       await unlinkPageFromHierarchy(noteId);
-      await refreshPanel(true);
-      return { ok: true };
+      return panelStateResponse();
     }
 
     if (name === 'moveUp' && noteId) {
       await moveSibling(noteId, -1);
-      await refreshPanel(true);
-      return { ok: true };
+      return panelStateResponse();
     }
 
     if (name === 'moveDown' && noteId) {
       await moveSibling(noteId, 1);
-      await refreshPanel(true);
-      return { ok: true };
+      return panelStateResponse();
     }
 
     if (name === 'repair') {
       const count = await repairCurrentNotebookMetadata();
-      await refreshPanel(true);
-      if (count === null) return { ok: true, message: 'Repair cancelled.' };
-      return { ok: true, message: count ? `Repaired ${count} metadata item${count === 1 ? '' : 's'}.` : 'No repairs were needed.' };
+      if (count === null) return panelStateResponse('Repair cancelled.');
+      return panelStateResponse(count ? `Repaired ${count} metadata item${count === 1 ? '' : 's'}.` : 'No repairs were needed.');
     }
 
     return { ok: false, message: 'Unsupported Sub-Pages panel action.' };
@@ -339,6 +337,15 @@ async function handlePanelMessage(message: any): Promise<any> {
     await showToast(`Sub-Pages failed: ${messageText}`, ToastType.Error);
     return { ok: false, message: messageText };
   }
+}
+
+async function panelStateResponse(message?: string): Promise<any> {
+  const response: any = {
+    ok: true,
+    state: await buildPanelState(),
+  };
+  if (message) response.message = message;
+  return response;
 }
 
 function schedulePanelRefresh(delay = 150): void {
@@ -363,6 +370,7 @@ function scheduleSelectionRefresh(delay = 75): void {
 
 async function postSelectedNoteState(): Promise<void> {
   if (!panelHandle) return;
+  if (!panelReady) return;
   if (!await panelVisible()) return;
 
   joplin.views.panels.postMessage(panelHandle, {
@@ -373,6 +381,7 @@ async function postSelectedNoteState(): Promise<void> {
 
 async function refreshPanel(force = false): Promise<void> {
   if (!panelHandle) return;
+  if (!panelReady) return;
   if (!force && !await panelVisible()) return;
 
   const state = await buildPanelState();

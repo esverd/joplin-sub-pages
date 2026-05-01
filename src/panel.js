@@ -13,9 +13,9 @@
     }
 
     setBusy(true);
-    return api.postMessage(Object.assign({ name }, payload || {}))
+    return Promise.resolve(api.postMessage(Object.assign({ name }, payload || {})))
       .then((response) => {
-        if (response && response.message) setStatus(response.message);
+        applyResponse(response);
         return response;
       })
       .catch((error) => {
@@ -24,6 +24,19 @@
       .finally(() => {
         setBusy(false);
       });
+  }
+
+  function applyResponse(response) {
+    if (!response) return;
+
+    if (response.state) {
+      currentState = response.state;
+      statusText = response.message || '';
+      render();
+      return;
+    }
+
+    if (response.message) setStatus(response.message);
   }
 
   function setBusy(value) {
@@ -73,7 +86,7 @@
 
     titleWrap.appendChild(element('div', { className: 'sub-pages-heading' }, [folderTitle]));
     titleWrap.appendChild(element('div', { className: 'sub-pages-subtitle' }, [
-      `${currentState.noteCount || 0} notes · ${currentState.metadataItemCount || 0} Sub-Pages metadata items · ${sortLabel(currentState.sortMode)}`,
+      `${currentState.noteCount || 0} notes | ${currentState.metadataItemCount || 0} Sub-Pages metadata items | ${sortLabel(currentState.sortMode)}`,
     ]));
     header.appendChild(titleWrap);
 
