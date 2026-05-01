@@ -71,6 +71,11 @@ interface TreeBuildResult {
   metadataItemCount: number;
 }
 
+interface MoveParentCandidate {
+  note: NoteSummary;
+  path: string[];
+}
+
 interface RepairOperation {
   type: 'clearParentId' | 'setChildIds' | 'clearChildIds';
   noteId: string;
@@ -86,6 +91,12 @@ let panelHandle: string | null = null;
 let panelReady = false;
 let refreshTimer: any = null;
 let selectionRefreshTimer: any = null;
+let selectionPollTimer: any = null;
+let pendingSelectedNoteId: string | null | undefined = undefined;
+let knownSelectedNoteId: string | null = null;
+let hasKnownSelectedNoteId = false;
+let lastPostedSelectedNoteId: string | null = null;
+let hasPostedSelectedNoteId = false;
 
 joplin.plugins.register({
   onStart: async () => {
@@ -111,7 +122,7 @@ async function registerSettings(): Promise<void> {
       section: SETTINGS_SECTION,
       public: true,
       label: 'Panel sort mode',
-      description: 'Controls sibling ordering in the Sub-Pages panel. Recent groups keeps edited descendants with their parent group.',
+      description: 'Controls sibling ordering in the Sub-Pages panel. Recent groups uses each page update time plus direct child updates.',
       isEnum: true,
       options: {
         recentGroups: 'Recent groups',
@@ -259,8 +270,23 @@ async function registerPanel(): Promise<void> {
 }
 
 async function registerRefreshEvents(): Promise<void> {
-  await joplin.workspace.onNoteSelectionChange(async () => {
+  await joplin.workspace.onNoteSelectionChange(async (event: any) => {
+    const eventSelectedNoteId = selectedNoteIdFromEvent(event);
+    if (eventSelectedNoteId !== undefined) {
+      rememberSelectedNoteId(eventSelectedNoteId);
+      scheduleSelectionRefresh(0, eventSelectedNoteId);
+    } else {
+      scheduleSelectionRefresh();
+    }
+  });
+
+  await joplin.workspace.onNoteChange(async () => {
+    schedulePanelRefresh(650);
     scheduleSelectionRefresh();
+  });
+
+  await joplin.workspace.onSyncComplete(async () => {
+    schedulePanelRefresh(1000);
   });
 
   await joplin.settings.onChange(async (event) => {
@@ -268,6 +294,12 @@ async function registerRefreshEvents(): Promise<void> {
       schedulePanelRefresh();
     }
   });
+
+  if (!selectionPollTimer) {
+    selectionPollTimer = setInterval(() => {
+      scheduleSelectionRefresh();
+    }, 1000);
+  }
 }
 
 async function handlePanelMessage(message: any): Promise<any> {
@@ -282,6 +314,13 @@ async function handlePanelMessage(message: any): Promise<any> {
 
     if (name === 'refresh') {
       return panelStateResponse();
+    }
+
+    if (name === 'selectedNoteState') {
+      return {
+        ok: true,
+        selectedNoteId: await selectedNoteId(),
+      };
     }
 
     if (name === 'createRoot') {
@@ -359,24 +398,35 @@ function schedulePanelRefresh(delay = 150): void {
   }, delay);
 }
 
-function scheduleSelectionRefresh(delay = 75): void {
+function scheduleSelectionRefresh(delay = 75, selectedNoteIdOverride?: string | null): void {
+  if (selectedNoteIdOverride !== undefined) pendingSelectedNoteId = selectedNoteIdOverride;
+
   if (selectionRefreshTimer) clearTimeout(selectionRefreshTimer);
   selectionRefreshTimer = setTimeout(() => {
     selectionRefreshTimer = null;
-    postSelectedNoteState().catch((error) => {
+    const selectedNoteId = pendingSelectedNoteId;
+    pendingSelectedNoteId = undefined;
+    postSelectedNoteState(selectedNoteId).catch((error) => {
       console.error('Sub-Pages selection refresh failed', error);
     });
   }, delay);
 }
 
-async function postSelectedNoteState(): Promise<void> {
+async function postSelectedNoteState(selectedNoteIdOverride?: string | null): Promise<void> {
   if (!panelHandle) return;
   if (!panelReady) return;
-  if (!await panelVisible()) return;
+
+  const selectedId = selectedNoteIdOverride !== undefined ? selectedNoteIdOverride : await selectedNoteId();
+  rememberSelectedNoteId(selectedId);
+
+  if (hasPostedSelectedNoteId && selectedId === lastPostedSelectedNoteId) return;
+
+  lastPostedSelectedNoteId = selectedId;
+  hasPostedSelectedNoteId = true;
 
   joplin.views.panels.postMessage(panelHandle, {
     name: 'selection',
-    selectedNoteId: await selectedNoteId(),
+    selectedNoteId: selectedId,
   });
 }
 
@@ -498,7 +548,7 @@ async function buildTree(notes: NoteSummary[], notebookId: string, sortMode: Pan
     const childNotes = childrenByParent.get(note.id) ?? [];
     const children = childNotes.map(buildNode);
     const updatedTime = noteTime(note);
-    const effectiveTime = children.reduce((max, child) => Math.max(max, child.effectiveTime), updatedTime);
+    const effectiveTime = children.reduce((max, child) => Math.max(max, child.updatedTime), updatedTime);
     return {
       id: note.id,
       title: displayTitle(note),
@@ -654,20 +704,22 @@ async function movePageWithDialog(noteId: string): Promise<void> {
     return;
   }
 
-  const candidates = await moveParentCandidates(note);
+  const moveContext = await moveParentContext(note);
+  const candidates = moveContext.candidates;
   if (!candidates.length) {
     await notify('No eligible parent pages were found in this notebook.');
     return;
   }
 
   const options = candidates.map((candidate) => {
-    return `<option value="${escapeHtml(candidate.id)}">${escapeHtml(displayTitle(candidate))}</option>`;
+    return `<option value="${escapeHtml(candidate.note.id)}">${escapeHtml(moveCandidateLabel(candidate))}</option>`;
   }).join('');
 
   const handle = await joplin.views.dialogs.create(DIALOG_MOVE_PARENT);
   await joplin.views.dialogs.setHtml(handle, `
     <form name="movePage">
-      <p>Select the parent page that should contain this page.</p>
+      <p style="margin-top: 0;">Choose where this page should appear in the Sub-Pages tree.</p>
+      <p style="color: var(--joplin-color-faded, #666); font-size: 12px;">Moving: ${escapeHtml(moveContext.currentPath.join(' / '))}</p>
       <label>
         Parent page
         <select name="parentId" style="box-sizing: border-box; margin-top: 8px; width: 100%;">
@@ -867,16 +919,68 @@ async function repairOperationsForCurrentNotebook(): Promise<RepairOperation[]> 
   return operations;
 }
 
-async function moveParentCandidates(note: NoteSummary): Promise<NoteSummary[]> {
+async function moveParentContext(note: NoteSummary): Promise<{ currentPath: string[]; candidates: MoveParentCandidate[] }> {
   const notes = await listNotebookNotes(note.parent_id);
   const metaMap = await buildMetaMap(notes);
   const noteMap = toNoteMap(notes);
   const currentParentId = metaMap.get(note.id)?.parentId ?? null;
-  return notes
+  const candidates = notes
     .filter((candidate) => candidate.id !== note.id)
     .filter((candidate) => candidate.id !== currentParentId)
     .filter((candidate) => !isDescendantFromMeta(candidate.id, note.id, metaMap, noteMap))
-    .sort(compareNotesByTitle);
+    .map((candidate) => {
+      const path = hierarchyPathFor(candidate, metaMap, noteMap);
+      return {
+        note: candidate,
+        path,
+      };
+    })
+    .sort(compareMoveCandidates);
+
+  return {
+    currentPath: hierarchyPathFor(note, metaMap, noteMap),
+    candidates,
+  };
+}
+
+function hierarchyPathFor(note: NoteSummary, metaMap: Map<string, HierarchyMeta>, noteMap: Map<string, NoteSummary>): string[] {
+  const path = [displayTitle(note)];
+  const seen = new Set<string>([note.id]);
+  let currentId: string | null = note.id;
+
+  while (currentId) {
+    const parentId = metaMap.get(currentId)?.parentId ?? null;
+    if (!parentId || seen.has(parentId)) break;
+
+    const parent = noteMap.get(parentId);
+    if (!parent) break;
+
+    seen.add(parentId);
+    path.unshift(displayTitle(parent));
+    currentId = parentId;
+  }
+
+  return path;
+}
+
+function compareMoveCandidates(a: MoveParentCandidate, b: MoveParentCandidate): number {
+  const maxLength = Math.max(a.path.length, b.path.length);
+  for (let index = 0; index < maxLength; index++) {
+    const aPart = a.path[index];
+    const bPart = b.path[index];
+    if (aPart === undefined) return -1;
+    if (bPart === undefined) return 1;
+
+    const titleComparison = compareTitles(aPart, bPart);
+    if (titleComparison) return titleComparison;
+  }
+
+  return compareNotesByTitle(a.note, b.note);
+}
+
+function moveCandidateLabel(candidate: MoveParentCandidate): string {
+  if (candidate.path.length <= 1) return displayTitle(candidate.note);
+  return candidate.path.join(' / ');
 }
 
 async function isDescendant(candidateId: string, ancestorId: string, notebookId: string): Promise<boolean> {
@@ -934,11 +1038,36 @@ async function selectedFolderSummary(): Promise<FolderSummary | null> {
 
 async function selectedNoteId(): Promise<string | null> {
   try {
-    const note = await joplin.workspace.selectedNote();
-    return note?.id ? String(note.id) : null;
+    const noteIds = await joplin.workspace.selectedNoteIds();
+    if (Array.isArray(noteIds)) {
+      const noteId = typeof noteIds[0] === 'string' && noteIds[0] ? noteIds[0] : null;
+      rememberSelectedNoteId(noteId);
+      return noteId;
+    }
   } catch {
-    return null;
+    // Fall back to selectedNote below.
   }
+
+  try {
+    const note = await joplin.workspace.selectedNote();
+    const noteId = note?.id ? String(note.id) : null;
+    rememberSelectedNoteId(noteId);
+    return noteId;
+  } catch {
+    return hasKnownSelectedNoteId ? knownSelectedNoteId : null;
+  }
+}
+
+function selectedNoteIdFromEvent(event: any): string | null | undefined {
+  const value = event?.value;
+  if (Array.isArray(value)) return typeof value[0] === 'string' && value[0] ? value[0] : null;
+  if (typeof value === 'string') return value || null;
+  return undefined;
+}
+
+function rememberSelectedNoteId(noteId: string | null): void {
+  knownSelectedNoteId = noteId;
+  hasKnownSelectedNoteId = true;
 }
 
 async function getNote(noteId: string): Promise<NoteSummary | null> {

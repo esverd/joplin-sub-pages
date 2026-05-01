@@ -6,7 +6,7 @@ Sub-Pages adds a notebook-scoped page tree panel to Joplin. Notes can contain ch
 
 - A dedicated **Sub-Pages** panel shows a collapsible note tree for the current notebook.
 - Notes can have children and descendants without changing the native note list order.
-- The default panel sort is **Recent groups**, which moves edited parent groups upward while keeping descendants under their parents.
+- The default panel sort is **Recent groups**, which uses a page's own update time plus direct child updates so recently edited child pages lift their immediate parent group.
 - Panel actions:
   - Create root page
   - Create child page
@@ -48,7 +48,7 @@ The plugin does not create index notes, sidecar files, or per-note metadata for 
 
 Refreshing the panel is read-only. Repair reads all notes in the selected notebook, but only writes when existing Sub-Pages metadata is stale or inconsistent.
 
-The panel does not rebuild the full tree after every note edit or sync completion. Use **Refresh Sub-Pages panel** when you want to manually reload the tree from Joplin.
+The panel debounces tree refreshes after note edits and sync completion. Use **Refresh Sub-Pages panel** when you want to manually reload the tree from Joplin.
 
 ## Development
 

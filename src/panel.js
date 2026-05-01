@@ -5,6 +5,16 @@
   let currentState = null;
   let statusText = '';
   let busy = false;
+  let selectionSyncInFlight = false;
+
+  const icons = {
+    chevronDown: '<svg viewBox="0 0 16 16"><path d="m4 6 4 4 4-4"/></svg>',
+    chevronRight: '<svg viewBox="0 0 16 16"><path d="m6 4 4 4-4 4"/></svg>',
+    more: '<svg viewBox="0 0 16 16"><circle cx="3.5" cy="8" r="1.1"/><circle cx="8" cy="8" r="1.1"/><circle cx="12.5" cy="8" r="1.1"/></svg>',
+    plus: '<svg viewBox="0 0 16 16"><path d="M8 3v10M3 8h10"/></svg>',
+    refresh: '<svg viewBox="0 0 16 16"><path d="M13 6A5 5 0 1 0 14 9M13 6V2h-4"/></svg>',
+    repair: '<svg viewBox="0 0 16 16"><path d="M10.8 2.3a3.2 3.2 0 0 0-4 4L2.8 10.3a1.7 1.7 0 0 0 2.4 2.4l4-4a3.2 3.2 0 0 0 4-4l-2 2-2-2 2-2Z"/></svg>',
+  };
 
   function post(name, payload) {
     if (!api || typeof api.postMessage !== 'function') {
@@ -49,6 +59,28 @@
     render();
   }
 
+  function syncSelectedNote() {
+    if (!currentState || selectionSyncInFlight) return;
+    if (!api || typeof api.postMessage !== 'function') return;
+
+    selectionSyncInFlight = true;
+    Promise.resolve(api.postMessage({ name: 'selectedNoteState' }))
+      .then((response) => {
+        if (!response || response.selectedNoteId === undefined || !currentState) return;
+        const nextSelectedNoteId = response.selectedNoteId || null;
+        if (currentState.selectedNoteId === nextSelectedNoteId) return;
+
+        currentState.selectedNoteId = nextSelectedNoteId;
+        render();
+      })
+      .catch(() => {
+        // The event-driven path still handles selection changes when available.
+      })
+      .finally(() => {
+        selectionSyncInFlight = false;
+      });
+  }
+
   function render() {
     if (!currentState) {
       const loading = element('div', { className: 'sub-pages-shell' });
@@ -63,12 +95,14 @@
 
     if (currentState.error) {
       root.appendChild(element('div', { className: 'sub-pages-empty' }, [currentState.error]));
-    } else if (!currentState.nodes.length) {
-      root.appendChild(element('div', { className: 'sub-pages-empty' }, ['No notes in this notebook yet.']));
     } else {
-      const tree = element('div', { className: 'sub-pages-tree', role: 'tree' });
-      currentState.nodes.forEach((node) => renderNode(node, 0, tree));
-      root.appendChild(tree);
+      if (shouldShowOnboarding()) root.appendChild(renderOnboarding());
+
+      if (currentState.nodes.length) {
+        const tree = element('div', { className: 'sub-pages-tree', role: 'tree' });
+        currentState.nodes.forEach((node) => renderNode(node, 0, tree));
+        root.appendChild(tree);
+      }
     }
 
     if (statusText) {
@@ -84,21 +118,50 @@
     const header = element('div', { className: 'sub-pages-header' });
     const titleWrap = element('div', { className: 'sub-pages-title-wrap' });
 
+    const actions = element('div', { className: 'sub-pages-header-actions' });
+    actions.appendChild(iconButton('createRoot', null, 'plus', 'Create root page', false, 'sub-pages-icon-button'));
+    if (repairCount > 0) {
+      actions.appendChild(iconButton('repair', null, 'repair', `Repair ${repairCount} metadata issue${repairCount === 1 ? '' : 's'}`, false, 'sub-pages-icon-button'));
+    }
+    actions.appendChild(iconButton('refresh', null, 'refresh', 'Refresh tree', false, 'sub-pages-icon-button'));
+    header.appendChild(actions);
+
     titleWrap.appendChild(element('div', { className: 'sub-pages-heading' }, [folderTitle]));
     titleWrap.appendChild(element('div', { className: 'sub-pages-subtitle' }, [
       `${currentState.noteCount || 0} notes | ${currentState.metadataItemCount || 0} Sub-Pages metadata items | ${sortLabel(currentState.sortMode)}`,
     ]));
     header.appendChild(titleWrap);
 
-    const actions = element('div', { className: 'sub-pages-header-actions' });
-    actions.appendChild(actionButton('createRoot', null, '+', 'Create root page', false, 'sub-pages-icon-button'));
-    if (repairCount > 0) {
-      actions.appendChild(actionButton('repair', null, 'Fix', `Repair ${repairCount} metadata issue${repairCount === 1 ? '' : 's'}`, false, 'sub-pages-icon-button'));
-    }
-    actions.appendChild(actionButton('refresh', null, 'R', 'Refresh tree', false, 'sub-pages-icon-button'));
-    header.appendChild(actions);
-
     return header;
+  }
+
+  function shouldShowOnboarding() {
+    return Number(currentState.noteCount || 0) === 0 || Number(currentState.metadataItemCount || 0) === 0;
+  }
+
+  function renderOnboarding() {
+    const noteCount = Number(currentState.noteCount || 0);
+    const selectedNode = findNodeById(currentState.nodes, currentState.selectedNoteId);
+    const empty = noteCount === 0;
+    const wrap = element('div', { className: 'sub-pages-onboarding' });
+
+    wrap.appendChild(element('div', { className: 'sub-pages-onboarding-title' }, [
+      empty ? 'Start a Sub-Pages notebook' : 'No linked sub-pages yet',
+    ]));
+    wrap.appendChild(element('div', { className: 'sub-pages-onboarding-copy' }, [
+      empty
+        ? 'Create the first page here, then add child pages from its row menu.'
+        : 'Your notebook is still a flat list. Create a child under the selected page, or use a row menu to begin a hierarchy.',
+    ]));
+
+    const actions = element('div', { className: 'sub-pages-onboarding-actions' });
+    if (selectedNode) {
+      actions.appendChild(actionButton('createChild', selectedNode.id, 'Create child under selected', 'Create child under selected page'));
+    }
+    actions.appendChild(actionButton('createRoot', null, empty ? 'Create first page' : 'Create root page', empty ? 'Create first page' : 'Create root page'));
+    wrap.appendChild(actions);
+
+    return wrap;
   }
 
   function renderNode(node, depth, container) {
@@ -121,10 +184,15 @@
     const main = element('div', { className: 'sub-pages-row-main' });
 
     if (hasChildren) {
-      main.appendChild(actionButton('toggle', node.id, isCollapsed ? '>' : 'v', isCollapsed ? 'Expand' : 'Collapse', false, 'sub-pages-icon-button sub-pages-toggle'));
+      main.appendChild(iconButton('toggle', node.id, isCollapsed ? 'chevronRight' : 'chevronDown', isCollapsed ? 'Expand' : 'Collapse', false, 'sub-pages-icon-button sub-pages-toggle'));
     } else {
       main.appendChild(element('span', { className: 'sub-pages-spacer' }));
     }
+
+    const actions = element('span', { className: 'sub-pages-row-actions' });
+    actions.appendChild(iconButton('createChild', node.id, 'plus', 'Create child page', false, 'sub-pages-icon-button'));
+    actions.appendChild(renderNodeMenu(node, hasChildren));
+    main.appendChild(actions);
 
     const title = actionButton('openNote', node.id, node.title, 'Open note');
     title.classList.add('sub-pages-note-title');
@@ -140,11 +208,6 @@
     }
     row.appendChild(main);
 
-    const actions = element('span', { className: 'sub-pages-row-actions' });
-    actions.appendChild(actionButton('createChild', node.id, '+', 'Create child page', false, 'sub-pages-icon-button'));
-    actions.appendChild(renderNodeMenu(node, hasChildren));
-    row.appendChild(actions);
-
     container.appendChild(row);
 
     if (hasChildren && !isCollapsed) {
@@ -156,12 +219,27 @@
     return !!(node.children && node.children.length);
   }
 
+  function findNodeById(nodes, noteId) {
+    if (!noteId) return null;
+
+    for (const node of nodes || []) {
+      if (node.id === noteId) return node;
+
+      const child = findNodeById(node.children, noteId);
+      if (child) return child;
+    }
+
+    return null;
+  }
+
   function renderNodeMenu(node, hasChildren) {
     const details = element('details', { className: 'sub-pages-row-menu' });
     const summary = element('summary', {
       className: 'sub-pages-button sub-pages-icon-button sub-pages-menu-trigger',
       title: 'More actions',
-    }, ['...']);
+      role: 'button',
+      ariaLabel: 'More actions',
+    }, [iconElement('more')]);
     details.appendChild(summary);
 
     const menu = element('div', { className: 'sub-pages-menu', role: 'menu' });
@@ -190,11 +268,24 @@
       className: ['sub-pages-button', extraClassName || ''].filter(Boolean).join(' '),
       type: 'button',
       title: title || '',
+      ariaLabel: title || text || action,
       disabled: disabled ? 'disabled' : null,
     }, [text]);
     button.dataset.action = action;
     if (noteId) button.dataset.noteId = noteId;
     return button;
+  }
+
+  function iconButton(action, noteId, iconName, title, disabled, extraClassName) {
+    const button = actionButton(action, noteId, '', title, disabled, extraClassName);
+    button.replaceChildren(iconElement(iconName));
+    return button;
+  }
+
+  function iconElement(iconName) {
+    const icon = element('span', { className: 'sub-pages-icon', ariaHidden: 'true' });
+    icon.innerHTML = icons[iconName] || '';
+    return icon;
   }
 
   function element(tagName, props, children) {
@@ -207,6 +298,10 @@
         node.setAttribute('style', value);
       } else if (key === 'role') {
         node.setAttribute('role', value);
+      } else if (key === 'ariaLabel') {
+        node.setAttribute('aria-label', value);
+      } else if (key === 'ariaHidden') {
+        node.setAttribute('aria-hidden', value);
       } else if (key === 'disabled') {
         node.disabled = true;
       } else if (key === 'title') {
@@ -237,7 +332,10 @@
         event.preventDefault();
         const shouldOpen = rowMenu && !rowMenu.open;
         closeOpenMenus(rowMenu);
-        if (rowMenu) rowMenu.open = shouldOpen;
+        if (rowMenu) {
+          rowMenu.open = shouldOpen;
+          syncOpenMenuClass(rowMenu);
+        }
       } else if (!rowMenu) {
         closeOpenMenus();
       }
@@ -262,6 +360,10 @@
     if (action === 'unlink' && !window.confirm('Unlink this page from its Sub-Pages hierarchy?')) return;
 
     closeOpenMenus();
+    if (action === 'openNote' && noteId && currentState) {
+      currentState.selectedNoteId = noteId;
+      render();
+    }
     post(action, noteId ? { noteId } : {});
   });
 
@@ -273,6 +375,7 @@
     if (!details) return;
     closeOpenMenus(details);
     details.open = true;
+    syncOpenMenuClass(details);
   });
 
   window.addEventListener('keydown', (event) => {
@@ -281,8 +384,16 @@
 
   function closeOpenMenus(except) {
     app.querySelectorAll('.sub-pages-row-menu[open]').forEach((menu) => {
-      if (menu !== except) menu.open = false;
+      if (menu !== except) {
+        menu.open = false;
+        syncOpenMenuClass(menu);
+      }
     });
+  }
+
+  function syncOpenMenuClass(menu) {
+    const row = menu.closest('.sub-pages-row');
+    if (row) row.classList.toggle('has-open-menu', !!menu.open);
   }
 
   if (api && typeof api.onMessage === 'function') {
@@ -310,6 +421,8 @@
   window.setTimeout(() => {
     if (!currentState) setStatus('Still loading. The plugin is waiting for note data from Joplin.');
   }, 5000);
+
+  window.setInterval(syncSelectedNote, 1000);
 
   post('ready');
 }());
