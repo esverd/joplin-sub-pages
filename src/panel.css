@@ -1,0 +1,173 @@
+:root {
+  color-scheme: light dark;
+}
+
+html,
+body,
+#app {
+  box-sizing: border-box;
+  height: 100%;
+  margin: 0;
+  min-width: 0;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: inherit;
+}
+
+body {
+  color: var(--joplin-color, #222);
+  font: 12px/1.4 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+.sub-pages-shell {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  padding: 8px;
+}
+
+.sub-pages-loading,
+.sub-pages-empty {
+  color: var(--joplin-color-faded, #666);
+  padding: 12px 8px;
+}
+
+.sub-pages-header {
+  align-items: flex-start;
+  border-bottom: 1px solid var(--joplin-divider-color, rgba(127, 127, 127, 0.25));
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+  min-width: 0;
+  padding-bottom: 8px;
+}
+
+.sub-pages-title-wrap {
+  min-width: 0;
+}
+
+.sub-pages-heading {
+  font-size: 13px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sub-pages-subtitle,
+.sub-pages-status {
+  color: var(--joplin-color-faded, #666);
+  font-size: 11px;
+}
+
+.sub-pages-header-actions,
+.sub-pages-row-actions {
+  align-items: center;
+  display: inline-flex;
+  flex: 0 0 auto;
+  gap: 4px;
+}
+
+.sub-pages-tree {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.sub-pages-row {
+  align-items: center;
+  border-radius: 4px;
+  display: flex;
+  gap: 4px;
+  min-height: 28px;
+  min-width: 0;
+  padding: 2px 4px 2px calc(4px + var(--depth) * 16px);
+}
+
+.sub-pages-row:hover {
+  background: var(--joplin-background-color-hover3, rgba(127, 127, 127, 0.12));
+}
+
+.sub-pages-row.is-selected {
+  background: var(--joplin-selected-color, rgba(80, 130, 210, 0.22));
+}
+
+.sub-pages-row.needs-repair {
+  color: var(--joplin-warning-color, #9a5b00);
+}
+
+.sub-pages-spacer {
+  flex: 0 0 22px;
+  height: 22px;
+}
+
+.sub-pages-button {
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  color: inherit;
+  cursor: pointer;
+  flex: 0 0 auto;
+  font: inherit;
+  min-height: 22px;
+  padding: 1px 5px;
+}
+
+.sub-pages-button:hover:not(:disabled) {
+  background: var(--joplin-background-color-hover, rgba(127, 127, 127, 0.16));
+  border-color: var(--joplin-divider-color, rgba(127, 127, 127, 0.28));
+}
+
+.sub-pages-button:disabled {
+  cursor: default;
+  opacity: 0.35;
+}
+
+.sub-pages-note-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sub-pages-note-title.is-todo::before {
+  content: "[ ] ";
+}
+
+.sub-pages-note-title.is-done {
+  opacity: 0.72;
+  text-decoration: line-through;
+}
+
+.sub-pages-note-title.is-done::before {
+  content: "[x] ";
+}
+
+.sub-pages-row-actions {
+  opacity: 0.68;
+}
+
+.sub-pages-row:hover .sub-pages-row-actions,
+.sub-pages-row.is-selected .sub-pages-row-actions,
+.sub-pages-row:focus-within .sub-pages-row-actions {
+  opacity: 1;
+}
+
+.sub-pages-badge {
+  border: 1px solid currentColor;
+  border-radius: 4px;
+  flex: 0 0 auto;
+  font-size: 10px;
+  opacity: 0.8;
+  padding: 0 4px;
+}
+
+.is-busy {
+  cursor: progress;
+}

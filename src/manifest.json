@@ -1,0 +1,24 @@
+{
+  "manifest_version": 1,
+  "id": "com.codex.subPages",
+  "app_min_version": "3.3",
+  "version": "1.0.0",
+  "name": "Sub-Pages",
+  "description": "Adds a notebook-scoped parent and child page tree panel to Joplin.",
+  "author": "Codex Assistant",
+  "homepage_url": "https://github.com/esverd/joplin-sub-pages",
+  "repository_url": "https://github.com/esverd/joplin-sub-pages",
+  "keywords": [
+    "joplin-plugin",
+    "productivity",
+    "personal knowledge management",
+    "notes"
+  ],
+  "categories": [
+    "productivity",
+    "personal knowledge management"
+  ],
+  "screenshots": [],
+  "icons": {},
+  "promo_tile": {}
+}
