@@ -233,6 +233,8 @@
         hasNodeChildren(node) ? 'has-children' : '',
       ].filter(Boolean).join(' '),
       role: 'treeitem',
+      ariaLevel: String(depth + 1),
+      ariaSelected: node.id === currentState.selectedNoteId ? 'true' : 'false',
       style: `--depth: ${depth};`,
     });
     row.dataset.noteId = node.id;
@@ -240,6 +242,7 @@
     const hasChildren = hasNodeChildren(node);
     const hasVisibleChildren = visibleChildren.length > 0;
     const isCollapsed = !filtering && collapsedIds.has(node.id);
+    if (hasChildren) row.setAttribute('aria-expanded', isCollapsed ? 'false' : 'true');
     row.classList.add(isCollapsed ? 'is-collapsed' : 'is-expanded');
     const main = element('div', { className: 'sub-pages-row-main' });
 
@@ -249,8 +252,9 @@
       main.appendChild(element('span', { className: 'sub-pages-spacer' }));
     }
 
-    const title = actionButton('openNote', node.id, node.title, 'Open note');
+    const title = actionButton('openNote', node.id, '', `Open ${node.title || 'Untitled page'}`);
     title.classList.add('sub-pages-note-title');
+    appendHighlightedTitle(title, node.title || 'Untitled page', filterText);
     if (node.isTodo) title.classList.add(node.todoCompleted ? 'is-done' : 'is-todo');
     main.appendChild(title);
 
@@ -319,6 +323,33 @@
     }
 
     return null;
+  }
+
+  function appendHighlightedTitle(container, title, filterText) {
+    const text = String(title || 'Untitled page');
+    if (!filterText) {
+      container.appendChild(document.createTextNode(text));
+      return;
+    }
+
+    const lowerText = text.toLocaleLowerCase();
+    let start = 0;
+    let matchIndex = lowerText.indexOf(filterText);
+
+    while (matchIndex >= 0) {
+      if (matchIndex > start) {
+        container.appendChild(document.createTextNode(text.slice(start, matchIndex)));
+      }
+
+      container.appendChild(element('mark', { className: 'sub-pages-search-match' }, [
+        text.slice(matchIndex, matchIndex + filterText.length),
+      ]));
+
+      start = matchIndex + filterText.length;
+      matchIndex = lowerText.indexOf(filterText, start);
+    }
+
+    if (start < text.length) container.appendChild(document.createTextNode(text.slice(start)));
   }
 
   function renderNodeMenu(node, hasChildren, depth) {
@@ -403,6 +434,10 @@
         node.setAttribute('aria-label', value);
       } else if (key === 'ariaHidden') {
         node.setAttribute('aria-hidden', value);
+      } else if (key === 'ariaLevel') {
+        node.setAttribute('aria-level', value);
+      } else if (key === 'ariaSelected') {
+        node.setAttribute('aria-selected', value);
       } else if (key === 'disabled') {
         node.disabled = true;
       } else if (key === 'title') {
