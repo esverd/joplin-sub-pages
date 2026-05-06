@@ -225,7 +225,7 @@
 
     const actions = element('span', { className: 'sub-pages-row-actions' });
     actions.appendChild(iconButton('createChild', node.id, 'plus', 'Create child page', false, 'sub-pages-icon-button'));
-    actions.appendChild(renderNodeMenu(node, hasChildren));
+    actions.appendChild(renderNodeMenu(node, hasChildren, depth));
     row.appendChild(actions);
 
     container.appendChild(row);
@@ -252,7 +252,7 @@
     return null;
   }
 
-  function renderNodeMenu(node, hasChildren) {
+  function renderNodeMenu(node, hasChildren, depth) {
     const details = element('details', { className: 'sub-pages-row-menu' });
     const summary = element('summary', {
       className: 'sub-pages-button sub-pages-icon-button sub-pages-menu-trigger',
@@ -267,11 +267,11 @@
     menu.appendChild(menuButton('createChild', node, 'Create child'));
     menu.appendChild(element('div', { className: 'sub-pages-menu-separator' }));
     menu.appendChild(menuButton('move', node, 'Move under...'));
-    menu.appendChild(menuButton('promote', node, 'Promote to root', !node.parentId));
+    menu.appendChild(menuButton('promote', node, 'Promote to root', depth <= 0));
     menu.appendChild(menuButton('moveUp', node, 'Move up', !node.canMoveUp));
     menu.appendChild(menuButton('moveDown', node, 'Move down', !node.canMoveDown));
     menu.appendChild(element('div', { className: 'sub-pages-menu-separator' }));
-    menu.appendChild(menuButton('unlink', node, 'Unlink', !node.parentId && !hasChildren));
+    menu.appendChild(menuButton('unlink', node, 'Unlink', depth <= 0 && !hasChildren));
 
     details.appendChild(menu);
     return details;
@@ -414,6 +414,29 @@
   function syncOpenMenuClass(menu) {
     const row = menu.closest('.sub-pages-row');
     if (row) row.classList.toggle('has-open-menu', !!menu.open);
+    menu.classList.remove('opens-up');
+
+    const menuPanel = menu.querySelector('.sub-pages-menu');
+    if (menuPanel) menuPanel.style.removeProperty('--sub-pages-menu-max-height');
+
+    if (!menu.open) return;
+
+    window.requestAnimationFrame(() => {
+      if (!menu.open) return;
+
+      const menuPanel = menu.querySelector('.sub-pages-menu');
+      if (!menuPanel) return;
+
+      const panelRect = menuPanel.getBoundingClientRect();
+      const triggerRect = menu.getBoundingClientRect();
+      const availableBelow = window.innerHeight - triggerRect.bottom - 8;
+      const availableAbove = triggerRect.top - 8;
+      const openUp = availableBelow < panelRect.height && availableAbove > availableBelow;
+      const availableHeight = Math.max(48, openUp ? availableAbove : availableBelow);
+
+      menu.classList.toggle('opens-up', openUp);
+      menuPanel.style.setProperty('--sub-pages-menu-max-height', `${availableHeight}px`);
+    });
   }
 
   if (api && typeof api.onMessage === 'function') {
