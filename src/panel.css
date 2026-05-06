@@ -393,7 +393,9 @@ body {
   gap: 2px;
   line-height: 1.35;
   max-height: var(--sub-pages-menu-max-height, calc(100vh - 16px));
-  min-width: 188px;
+  max-width: calc(100vw - 32px);
+  min-width: min(188px, calc(100vw - 32px));
+  overflow-x: hidden;
   overflow-y: auto;
   padding: 4px;
   position: absolute;
@@ -424,11 +426,13 @@ body {
 .sub-pages-menu-item {
   border-radius: 4px;
   color: inherit;
-  display: flex;
-  justify-content: flex-start;
+  display: block;
   min-height: 26px;
+  min-width: 0;
+  overflow: hidden;
   padding: 3px 8px;
   text-align: left;
+  text-overflow: ellipsis;
   white-space: nowrap;
   width: 100%;
 }

@@ -544,21 +544,43 @@
   window.addEventListener('keydown', (event) => {
     if (event.key !== 'Escape') return;
 
-    const searchInput = app.querySelector('input[data-action="search"]');
-    if (searchQuery && document.activeElement === searchInput) {
+    const openMenu = app.querySelector('.sub-pages-row-menu[open]');
+    if (openMenu) {
+      event.preventDefault();
+      closeOpenMenus(null, true);
+      return;
+    }
+
+    if (searchQuery) {
       event.preventDefault();
       searchQuery = '';
       render();
       focusSearchInput();
-      return;
     }
-
-    closeOpenMenus();
   });
 
   app.addEventListener('keydown', (event) => {
+    const trigger = event.target.closest('.sub-pages-menu-trigger');
+    if (trigger) {
+      const rowMenu = trigger.closest('.sub-pages-row-menu');
+      if (!rowMenu) return;
+
+      if (event.key === 'Enter' || event.key === ' ' || event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+        event.preventDefault();
+        openMenu(rowMenu, { focusFirst: event.key !== 'ArrowUp', focusLast: event.key === 'ArrowUp' });
+      }
+      return;
+    }
+
     const menu = event.target.closest('.sub-pages-menu');
     if (!menu) return;
+
+    const rowMenu = menu.closest('.sub-pages-row-menu');
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      if (rowMenu) closeMenu(rowMenu, true);
+      return;
+    }
 
     const items = [...menu.querySelectorAll('.sub-pages-menu-item:not(:disabled)')];
     const currentIndex = items.indexOf(document.activeElement);
@@ -590,20 +612,28 @@
     menu.open = true;
     syncOpenMenuClass(menu);
 
-    if (options && options.focusFirst) {
+    if (options && (options.focusFirst || options.focusLast)) {
       window.requestAnimationFrame(() => {
-        const firstItem = menu.querySelector('.sub-pages-menu-item:not(:disabled)');
-        if (firstItem) firstItem.focus();
+        const items = [...menu.querySelectorAll('.sub-pages-menu-item:not(:disabled)')];
+        const item = options.focusLast ? items[items.length - 1] : items[0];
+        if (item) item.focus();
       });
     }
   }
 
-  function closeOpenMenus(except) {
+  function closeMenu(menu, returnFocus) {
+    menu.open = false;
+    syncOpenMenuClass(menu);
+
+    if (returnFocus) {
+      const trigger = menu.querySelector('.sub-pages-menu-trigger');
+      if (trigger) trigger.focus();
+    }
+  }
+
+  function closeOpenMenus(except, returnFocus) {
     app.querySelectorAll('.sub-pages-row-menu[open]').forEach((menu) => {
-      if (menu !== except) {
-        menu.open = false;
-        syncOpenMenuClass(menu);
-      }
+      if (menu !== except) closeMenu(menu, returnFocus);
     });
   }
 
