@@ -15,6 +15,17 @@ const COMMAND_PROMOTE_PAGE = 'subPages.promotePage';
 const COMMAND_UNLINK_PAGE = 'subPages.unlinkPage';
 const COMMAND_REPAIR_METADATA = 'subPages.repairMetadata';
 
+const NOTE_LIST_PARITY_COMMANDS = new Set([
+  'openNoteInNewWindow',
+  'startExternalEditing',
+  'setTags',
+  'toggleNoteType',
+  'moveToFolder',
+  'duplicateNote',
+  'deleteNote',
+  'showNoteProperties',
+]);
+
 const PLUGIN_ID = 'com.codex.subPages';
 const PANEL_ID = `${PLUGIN_ID}.panel`;
 const DIALOG_MOVE_PARENT = 'subPages.moveParentDialog';
@@ -354,6 +365,34 @@ async function handlePanelMessage(message: any): Promise<any> {
       await openNote(noteId);
       scheduleSelectionRefresh();
       return { ok: true };
+    }
+
+    if (NOTE_LIST_PARITY_COMMANDS.has(name) && noteId) {
+      // Joplin's real notes-list context menu is built in the desktop React/Electron
+      // note-list component (NoteListUtils.makeContextMenu) and is not exposed through
+      // the plugin panel/webview API. The panel fallback delegates individual high-value
+      // menu items to the same internal commands where possible instead of duplicating
+      // Joplin's native Electron menu.
+      await runNoteListParityCommand(name, noteId);
+      if (name !== 'openNoteInNewWindow' && name !== 'startExternalEditing' && name !== 'showNoteProperties' && name !== 'setTags') {
+        markNoteRecentlyChanged(noteId);
+        markPanelStateChanged();
+        scheduleSettledPanelRefreshes();
+        return panelStateResponse();
+      }
+
+      schedulePanelRefresh(500);
+      return { ok: true };
+    }
+
+    if (name === 'copyMarkdownLink' && noteId) {
+      await copyMarkdownLink(noteId);
+      return { ok: true, message: 'Copied Markdown link.' };
+    }
+
+    if (name === 'copyExternalLink' && noteId) {
+      await copyExternalLink(noteId);
+      return { ok: true, message: 'Copied external link.' };
     }
 
     if (name === 'createChild' && noteId) {
@@ -1442,6 +1481,36 @@ async function openNote(noteId: string): Promise<void> {
       // Keep trying; openNote is an internal desktop command and its shape can vary.
     }
   }
+}
+
+async function runNoteListParityCommand(commandName: string, noteId: string): Promise<void> {
+  const listArgCommands = new Set(['setTags', 'toggleNoteType', 'moveToFolder', 'duplicateNote', 'deleteNote']);
+  const primaryArg = listArgCommands.has(commandName) ? [noteId] : noteId;
+  const fallbackArg = listArgCommands.has(commandName) ? noteId : [noteId];
+
+  try {
+    await joplin.commands.execute(commandName, primaryArg);
+  } catch (primaryError) {
+    try {
+      await joplin.commands.execute(commandName, fallbackArg);
+    } catch {
+      throw primaryError;
+    }
+  }
+}
+
+async function copyMarkdownLink(noteId: string): Promise<void> {
+  const note = await getNote(noteId);
+  const title = escapeMarkdownLinkTitle(note?.title || 'Untitled');
+  await joplin.clipboard.writeText(`[${title}](:/${noteId})`);
+}
+
+async function copyExternalLink(noteId: string): Promise<void> {
+  await joplin.clipboard.writeText(`joplin://x-callback-url/openNote?id=${encodeURIComponent(noteId)}`);
+}
+
+function escapeMarkdownLinkTitle(title: string): string {
+  return title.replace(/\\/g, '\\\\').replace(/]/g, '\\]');
 }
 
 async function runCommand(callback: () => Promise<void>): Promise<void> {

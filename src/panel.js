@@ -264,8 +264,20 @@
 
     const menu = element('div', { className: 'sub-pages-menu', role: 'menu' });
     menu.appendChild(menuButton('openNote', node, 'Open'));
-    menu.appendChild(menuButton('createChild', node, 'Create child'));
+    menu.appendChild(menuButton('openNoteInNewWindow', node, 'Open in new window'));
+    menu.appendChild(menuButton('startExternalEditing', node, 'Edit in external editor'));
     menu.appendChild(element('div', { className: 'sub-pages-menu-separator' }));
+    menu.appendChild(menuButton('setTags', node, 'Tags...'));
+    menu.appendChild(menuButton('toggleNoteType', node, node.isTodo ? 'Switch to note' : 'Switch to to-do'));
+    menu.appendChild(menuButton('moveToFolder', node, 'Move to notebook...'));
+    menu.appendChild(menuButton('duplicateNote', node, 'Duplicate'));
+    menu.appendChild(menuButton('deleteNote', node, 'Delete'));
+    menu.appendChild(element('div', { className: 'sub-pages-menu-separator' }));
+    menu.appendChild(menuButton('copyMarkdownLink', node, 'Copy Markdown link'));
+    menu.appendChild(menuButton('copyExternalLink', node, 'Copy external link'));
+    menu.appendChild(menuButton('showNoteProperties', node, 'Note properties'));
+    menu.appendChild(element('div', { className: 'sub-pages-menu-separator' }));
+    menu.appendChild(menuButton('createChild', node, 'Create child'));
     menu.appendChild(menuButton('move', node, 'Move under...'));
     menu.appendChild(menuButton('promote', node, 'Promote to root', depth <= 0));
     menu.appendChild(menuButton('moveUp', node, 'Move up', !node.canMoveUp));
