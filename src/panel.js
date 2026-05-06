@@ -561,11 +561,14 @@
       const triggerRect = menu.getBoundingClientRect();
       const availableBelow = window.innerHeight - triggerRect.bottom - 8;
       const availableAbove = triggerRect.top - 8;
-      const openUp = availableBelow < panelRect.height && availableAbove > availableBelow;
-      const availableHeight = Math.max(48, openUp ? availableAbove : availableBelow);
+      const targetHeight = Math.min(panelRect.height, 260);
+      const openUp = availableBelow < targetHeight && availableAbove > availableBelow;
+      const availableHeight = openUp ? availableAbove : availableBelow;
+      const viewportHeight = Math.max(80, window.innerHeight - 16);
+      const menuHeight = Math.min(viewportHeight, Math.max(120, availableHeight));
 
       menu.classList.toggle('opens-up', openUp);
-      menuPanel.style.setProperty('--sub-pages-menu-max-height', `${availableHeight}px`);
+      menuPanel.style.setProperty('--sub-pages-menu-max-height', `${menuHeight}px`);
     });
   }
 
