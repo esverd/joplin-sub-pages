@@ -354,12 +354,15 @@
 
   function renderNodeMenu(node, hasChildren, depth) {
     const details = element('details', { className: 'sub-pages-row-menu' });
+    const menuLabel = `More actions for ${node.title || 'Untitled page'}`;
     const summary = element('summary', {
       className: 'sub-pages-button sub-pages-icon-button sub-pages-menu-trigger',
-      title: 'More actions',
+      title: menuLabel,
       role: 'button',
-      ariaLabel: 'More actions',
+      ariaLabel: menuLabel,
     }, [iconElement('more')]);
+    summary.setAttribute('aria-haspopup', 'menu');
+    summary.setAttribute('aria-expanded', 'false');
     details.appendChild(summary);
 
     const menu = element('div', { className: 'sub-pages-menu', role: 'menu' });
@@ -473,11 +476,8 @@
       if (event.target.closest('.sub-pages-menu-trigger')) {
         event.preventDefault();
         const shouldOpen = rowMenu && !rowMenu.open;
-        closeOpenMenus(rowMenu);
-        if (rowMenu) {
-          rowMenu.open = shouldOpen;
-          syncOpenMenuClass(rowMenu);
-        }
+        if (rowMenu && shouldOpen) openMenu(rowMenu, { focusFirst: event.detail === 0 });
+        else closeOpenMenus();
       } else if (!rowMenu) {
         closeOpenMenus();
       }
@@ -538,9 +538,7 @@
     event.preventDefault();
     const details = row.querySelector('.sub-pages-row-menu');
     if (!details) return;
-    closeOpenMenus(details);
-    details.open = true;
-    syncOpenMenuClass(details);
+    openMenu(details, { focusFirst: true });
   });
 
   window.addEventListener('keydown', (event) => {
@@ -558,6 +556,26 @@
     closeOpenMenus();
   });
 
+  app.addEventListener('keydown', (event) => {
+    const menu = event.target.closest('.sub-pages-menu');
+    if (!menu) return;
+
+    const items = [...menu.querySelectorAll('.sub-pages-menu-item:not(:disabled)')];
+    const currentIndex = items.indexOf(document.activeElement);
+    let nextIndex = -1;
+
+    if (event.key === 'ArrowDown') nextIndex = currentIndex < items.length - 1 ? currentIndex + 1 : 0;
+    else if (event.key === 'ArrowUp') nextIndex = currentIndex > 0 ? currentIndex - 1 : items.length - 1;
+    else if (event.key === 'Home') nextIndex = 0;
+    else if (event.key === 'End') nextIndex = items.length - 1;
+    else return;
+
+    if (nextIndex >= 0 && items[nextIndex]) {
+      event.preventDefault();
+      items[nextIndex].focus();
+    }
+  });
+
   function focusSearchInput(cursorPosition) {
     const input = app.querySelector('input[data-action="search"]');
     if (!input) return;
@@ -565,6 +583,19 @@
     input.focus();
     const position = typeof cursorPosition === 'number' ? cursorPosition : input.value.length;
     if (typeof input.setSelectionRange === 'function') input.setSelectionRange(position, position);
+  }
+
+  function openMenu(menu, options) {
+    closeOpenMenus(menu);
+    menu.open = true;
+    syncOpenMenuClass(menu);
+
+    if (options && options.focusFirst) {
+      window.requestAnimationFrame(() => {
+        const firstItem = menu.querySelector('.sub-pages-menu-item:not(:disabled)');
+        if (firstItem) firstItem.focus();
+      });
+    }
   }
 
   function closeOpenMenus(except) {
@@ -579,6 +610,8 @@
   function syncOpenMenuClass(menu) {
     const row = menu.closest('.sub-pages-row');
     if (row) row.classList.toggle('has-open-menu', !!menu.open);
+    const trigger = menu.querySelector('.sub-pages-menu-trigger');
+    if (trigger) trigger.setAttribute('aria-expanded', menu.open ? 'true' : 'false');
     menu.classList.remove('opens-up');
 
     const menuPanel = menu.querySelector('.sub-pages-menu');
