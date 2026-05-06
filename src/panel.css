@@ -112,6 +112,49 @@ body {
   gap: 4px;
 }
 
+.sub-pages-search {
+  display: grid;
+  gap: 4px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  max-width: 100%;
+  min-width: 0;
+  width: 100%;
+}
+
+.sub-pages-search-input {
+  background: var(--joplin-background-color, #fff);
+  border: 1px solid var(--joplin-divider-color, rgba(127, 127, 127, 0.32));
+  border-radius: 4px;
+  color: var(--joplin-color, #222);
+  font: inherit;
+  min-height: 26px;
+  min-width: 0;
+  padding: 3px 7px;
+  width: 100%;
+}
+
+.sub-pages-search-input:focus {
+  border-color: var(--joplin-selected-color, rgba(80, 130, 210, 0.65));
+  outline: 1px solid var(--joplin-selected-color, rgba(80, 130, 210, 0.4));
+}
+
+.sub-pages-clear-search {
+  border-color: var(--joplin-divider-color, rgba(127, 127, 127, 0.28));
+  min-height: 26px;
+  padding-left: 8px;
+  padding-right: 8px;
+}
+
+.sub-pages-filter-status {
+  color: var(--joplin-color-faded, #666);
+  font-size: 11px;
+  grid-column: 1 / -1;
+}
+
+.sub-pages-search.is-active .sub-pages-search-input {
+  background: var(--joplin-background-color-hover2, rgba(127, 127, 127, 0.08));
+}
+
 .sub-pages-tree {
   display: flex;
   flex-direction: column;

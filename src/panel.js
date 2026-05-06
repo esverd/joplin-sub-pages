@@ -3,6 +3,7 @@
   const api = window.webviewApi;
   const collapsedIds = new Set();
   let currentState = null;
+  let searchQuery = '';
   let statusText = '';
   let busy = false;
   let selectionSyncInFlight = false;
@@ -112,16 +113,22 @@
 
     const root = element('div', { className: 'sub-pages-shell' });
     root.appendChild(renderHeader());
+    root.appendChild(renderSearch());
 
     if (currentState.error) {
       root.appendChild(element('div', { className: 'sub-pages-empty' }, [currentState.error]));
     } else {
-      if (shouldShowOnboarding()) root.appendChild(renderOnboarding());
+      const filterText = normalizedSearchQuery();
+      const visibleNodes = filteredRootNodes(filterText);
 
-      if (currentState.nodes.length) {
+      if (!filterText && shouldShowOnboarding()) root.appendChild(renderOnboarding());
+
+      if (currentState.nodes.length && visibleNodes.length) {
         const tree = element('div', { className: 'sub-pages-tree', role: 'tree' });
-        currentState.nodes.forEach((node) => renderNode(node, 0, tree));
+        visibleNodes.forEach((node) => renderNode(node, 0, tree, filterText));
         root.appendChild(tree);
+      } else if (filterText) {
+        root.appendChild(element('div', { className: 'sub-pages-empty' }, [`No pages match “${searchQuery.trim()}”.`]));
       }
     }
 
@@ -155,6 +162,34 @@
     return header;
   }
 
+  function renderSearch() {
+    const filterText = normalizedSearchQuery();
+    const active = !!filterText;
+    const visibleCount = active ? countVisibleFilterNodes(currentState.nodes, filterText) : countTreeNodes(currentState.nodes);
+    const totalCount = countTreeNodes(currentState.nodes);
+    const wrap = element('div', { className: ['sub-pages-search', active ? 'is-active' : ''].filter(Boolean).join(' ') });
+
+    const input = element('input', {
+      className: 'sub-pages-search-input',
+      type: 'search',
+      value: searchQuery,
+      placeholder: 'Search pages...',
+      ariaLabel: 'Search Sub-Pages by title',
+      autocomplete: 'off',
+    });
+    input.dataset.action = 'search';
+    wrap.appendChild(input);
+
+    if (active) {
+      wrap.appendChild(actionButton('clearSearch', null, 'Clear', 'Clear search', false, 'sub-pages-clear-search'));
+      wrap.appendChild(element('div', { className: 'sub-pages-filter-status' }, [
+        `Filtering: showing ${visibleCount} of ${totalCount} page${totalCount === 1 ? '' : 's'}. Matching branches are expanded temporarily.`,
+      ]));
+    }
+
+    return wrap;
+  }
+
   function shouldShowOnboarding() {
     return Number(currentState.noteCount || 0) === 0 || Number(currentState.metadataItemCount || 0) === 0;
   }
@@ -184,7 +219,11 @@
     return wrap;
   }
 
-  function renderNode(node, depth, container) {
+  function renderNode(node, depth, container, filterText) {
+    const visibleChildren = filterText
+      ? (node.children || []).filter((child) => nodeMatchesFilter(child, filterText))
+      : (node.children || []);
+    const filtering = !!filterText;
     const row = element('div', {
       className: [
         'sub-pages-row',
@@ -199,12 +238,13 @@
     row.dataset.noteId = node.id;
 
     const hasChildren = hasNodeChildren(node);
-    const isCollapsed = collapsedIds.has(node.id);
+    const hasVisibleChildren = visibleChildren.length > 0;
+    const isCollapsed = !filtering && collapsedIds.has(node.id);
     row.classList.add(isCollapsed ? 'is-collapsed' : 'is-expanded');
     const main = element('div', { className: 'sub-pages-row-main' });
 
     if (hasChildren) {
-      main.appendChild(iconButton('toggle', node.id, isCollapsed ? 'chevronRight' : 'chevronDown', isCollapsed ? 'Expand' : 'Collapse', false, 'sub-pages-icon-button sub-pages-toggle'));
+      main.appendChild(iconButton('toggle', node.id, isCollapsed ? 'chevronRight' : 'chevronDown', filtering ? 'Collapse state is preserved while filtering' : (isCollapsed ? 'Expand' : 'Collapse'), false, 'sub-pages-icon-button sub-pages-toggle'));
     } else {
       main.appendChild(element('span', { className: 'sub-pages-spacer' }));
     }
@@ -215,7 +255,9 @@
     main.appendChild(title);
 
     if (hasChildren) {
-      main.appendChild(element('span', { className: 'sub-pages-child-count', title: `${node.children.length} direct child page${node.children.length === 1 ? '' : 's'}` }, [String(node.children.length)]));
+      const hiddenChildCount = filtering ? node.children.length - visibleChildren.length : 0;
+      const titleSuffix = hiddenChildCount > 0 ? ` (${hiddenChildCount} hidden by search)` : '';
+      main.appendChild(element('span', { className: 'sub-pages-child-count', title: `${node.children.length} direct child page${node.children.length === 1 ? '' : 's'}${titleSuffix}` }, [String(node.children.length)]));
     }
 
     if (node.repairReason) {
@@ -230,9 +272,36 @@
 
     container.appendChild(row);
 
-    if (hasChildren && !isCollapsed) {
-      node.children.forEach((child) => renderNode(child, depth + 1, container));
+    if (hasVisibleChildren && !isCollapsed) {
+      visibleChildren.forEach((child) => renderNode(child, depth + 1, container, filterText));
     }
+  }
+
+  function normalizedSearchQuery() {
+    return searchQuery.trim().toLocaleLowerCase();
+  }
+
+  function filteredRootNodes(filterText) {
+    const nodes = currentState && currentState.nodes ? currentState.nodes : [];
+    if (!filterText) return nodes;
+    return nodes.filter((node) => nodeMatchesFilter(node, filterText));
+  }
+
+  function nodeMatchesFilter(node, filterText) {
+    if (!filterText) return true;
+    if (String(node.title || '').toLocaleLowerCase().includes(filterText)) return true;
+    return (node.children || []).some((child) => nodeMatchesFilter(child, filterText));
+  }
+
+  function countVisibleFilterNodes(nodes, filterText) {
+    return (nodes || []).reduce((count, node) => {
+      if (!nodeMatchesFilter(node, filterText)) return count;
+      return count + 1 + countVisibleFilterNodes(node.children, filterText);
+    }, 0);
+  }
+
+  function countTreeNodes(nodes) {
+    return (nodes || []).reduce((count, node) => count + 1 + countTreeNodes(node.children), 0);
   }
 
   function hasNodeChildren(node) {
@@ -340,6 +409,12 @@
         node.title = value;
       } else if (key === 'type') {
         node.type = value;
+      } else if (key === 'value') {
+        node.value = value;
+      } else if (key === 'placeholder') {
+        node.placeholder = value;
+      } else if (key === 'autocomplete') {
+        node.setAttribute('autocomplete', value);
       }
     });
 
@@ -379,8 +454,20 @@
     const action = button.dataset.action;
     const noteId = button.dataset.noteId || null;
 
+    if (action === 'clearSearch') {
+      searchQuery = '';
+      closeOpenMenus();
+      render();
+      focusSearchInput();
+      return;
+    }
+
     if (action === 'toggle' && noteId) {
       closeOpenMenus();
+      if (normalizedSearchQuery()) {
+        setStatus('Clear search to change collapse state.');
+        return;
+      }
       if (collapsedIds.has(noteId)) collapsedIds.delete(noteId);
       else collapsedIds.add(noteId);
       render();
@@ -399,6 +486,17 @@
     post(action, noteId ? { noteId } : {});
   });
 
+  app.addEventListener('input', (event) => {
+    const input = event.target.closest('input[data-action="search"]');
+    if (!input) return;
+
+    const cursorPosition = input.selectionStart;
+    searchQuery = input.value;
+    closeOpenMenus();
+    render();
+    focusSearchInput(cursorPosition);
+  });
+
   app.addEventListener('contextmenu', (event) => {
     const row = event.target.closest('.sub-pages-row[data-note-id]');
     if (!row) return;
@@ -411,8 +509,28 @@
   });
 
   window.addEventListener('keydown', (event) => {
-    if (event.key === 'Escape') closeOpenMenus();
+    if (event.key !== 'Escape') return;
+
+    const searchInput = app.querySelector('input[data-action="search"]');
+    if (searchQuery && document.activeElement === searchInput) {
+      event.preventDefault();
+      searchQuery = '';
+      render();
+      focusSearchInput();
+      return;
+    }
+
+    closeOpenMenus();
   });
+
+  function focusSearchInput(cursorPosition) {
+    const input = app.querySelector('input[data-action="search"]');
+    if (!input) return;
+
+    input.focus();
+    const position = typeof cursorPosition === 'number' ? cursorPosition : input.value.length;
+    if (typeof input.setSelectionRange === 'function') input.setSelectionRange(position, position);
+  }
 
   function closeOpenMenus(except) {
     app.querySelectorAll('.sub-pages-row-menu[open]').forEach((menu) => {
