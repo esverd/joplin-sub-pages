@@ -842,21 +842,53 @@ async function movePageWithDialog(noteId: string): Promise<void> {
 
   const handle = await joplin.views.dialogs.create(DIALOG_MOVE_PARENT);
   await joplin.views.dialogs.setHtml(handle, `
-    <form name="movePage">
-      <p style="margin-top: 0;">Choose where this page should appear in the Sub-Pages tree.</p>
-      <p style="color: var(--joplin-color-faded, #666); font-size: 12px;">Moving: ${escapeHtml(moveContext.currentPath.join(' / '))}</p>
-      <label>
-        Parent page
-        <select name="parentId" style="box-sizing: border-box; margin-top: 8px; width: 100%;">
-          ${options}
-        </select>
-      </label>
-    </form>
+    <!doctype html>
+    <html>
+      <head>
+        <style>
+          html, body {
+            box-sizing: border-box;
+            color: var(--joplin-color, #222);
+            font-family: var(--joplin-font-family, sans-serif);
+            font-size: var(--joplin-font-size, 13px);
+            margin: 0;
+            min-height: 180px;
+          }
+          *, *::before, *::after { box-sizing: inherit; }
+          form { min-width: 360px; padding: 16px; }
+          p { margin: 0 0 12px; }
+          .path { color: var(--joplin-color-faded, #666); font-size: 12px; margin-bottom: 16px; }
+          label { display: block; font-weight: 600; }
+          select {
+            background: var(--joplin-background-color, #fff);
+            color: var(--joplin-color, #222);
+            display: block;
+            font: inherit;
+            font-weight: normal;
+            margin-top: 8px;
+            width: 100%;
+          }
+        </style>
+      </head>
+      <body>
+        <form name="movePage">
+          <p>Choose where this page should appear in the Sub-Pages tree.</p>
+          <p class="path">Moving: ${escapeHtml(moveContext.currentPath.join(' / '))}</p>
+          <label>
+            Parent page
+            <select name="parentId">
+              ${options}
+            </select>
+          </label>
+        </form>
+      </body>
+    </html>
   `);
   await joplin.views.dialogs.setButtons(handle, [
     { id: 'ok', title: 'Move' },
     { id: 'cancel', title: 'Cancel' },
   ]);
+  await joplin.views.dialogs.setFitToContent(handle, false);
 
   const result = await joplin.views.dialogs.open(handle);
   if (result.id !== 'ok') return;
