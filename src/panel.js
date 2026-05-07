@@ -645,7 +645,7 @@
     menu.classList.remove('opens-up');
 
     const menuPanel = menu.querySelector('.sub-pages-menu');
-    if (menuPanel) menuPanel.style.removeProperty('--sub-pages-menu-max-height');
+    if (menuPanel) resetMenuPanelPosition(menuPanel);
 
     if (!menu.open) return;
 
@@ -655,19 +655,41 @@
       const menuPanel = menu.querySelector('.sub-pages-menu');
       if (!menuPanel) return;
 
-      const panelRect = menuPanel.getBoundingClientRect();
+      const margin = 8;
       const triggerRect = menu.getBoundingClientRect();
-      const availableBelow = window.innerHeight - triggerRect.bottom - 8;
-      const availableAbove = triggerRect.top - 8;
-      const targetHeight = Math.min(panelRect.height, 260);
+      const viewportWidth = Math.max(80, window.innerWidth);
+      const viewportHeight = Math.max(80, window.innerHeight);
+      const panelRect = menuPanel.getBoundingClientRect();
+      const menuWidth = Math.min(panelRect.width || 188, viewportWidth - margin * 2);
+      const naturalHeight = menuPanel.scrollHeight || panelRect.height || 260;
+      const targetHeight = Math.min(naturalHeight, 260);
+      const availableBelow = window.innerHeight - triggerRect.bottom - margin;
+      const availableAbove = triggerRect.top - margin;
       const openUp = availableBelow < targetHeight && availableAbove > availableBelow;
-      const availableHeight = openUp ? availableAbove : availableBelow;
-      const viewportHeight = Math.max(80, window.innerHeight - 16);
-      const menuHeight = Math.min(viewportHeight, Math.max(120, availableHeight));
+      const availableHeight = Math.max(80, openUp ? availableAbove : availableBelow);
+      const menuHeight = Math.min(targetHeight, availableHeight, viewportHeight - margin * 2);
+      const left = Math.max(margin, Math.min(triggerRect.right - menuWidth, viewportWidth - menuWidth - margin));
+      const top = openUp
+        ? Math.max(margin, triggerRect.top - menuHeight - 4)
+        : Math.min(triggerRect.bottom + 4, viewportHeight - menuHeight - margin);
 
       menu.classList.toggle('opens-up', openUp);
+      menuPanel.style.position = 'fixed';
+      menuPanel.style.right = 'auto';
+      menuPanel.style.bottom = 'auto';
+      menuPanel.style.left = `${left}px`;
+      menuPanel.style.top = `${top}px`;
       menuPanel.style.setProperty('--sub-pages-menu-max-height', `${menuHeight}px`);
     });
+  }
+
+  function resetMenuPanelPosition(menuPanel) {
+    menuPanel.style.removeProperty('--sub-pages-menu-max-height');
+    menuPanel.style.removeProperty('position');
+    menuPanel.style.removeProperty('right');
+    menuPanel.style.removeProperty('bottom');
+    menuPanel.style.removeProperty('left');
+    menuPanel.style.removeProperty('top');
   }
 
   if (api && typeof api.onMessage === 'function') {

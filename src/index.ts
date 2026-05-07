@@ -112,6 +112,7 @@ let lastPostedSelectedNoteId: string | null = null;
 let hasPostedSelectedNoteId = false;
 let settledRefreshTimers: any[] = [];
 let panelStateRevision = 0;
+let lastPanelFolderId: string | null | undefined = undefined;
 const recentChangeTimes = new Map<string, number>();
 
 joplin.plugins.register({
@@ -187,6 +188,7 @@ async function registerCommands(): Promise<void> {
           return;
         }
         await createChildPage(note.id);
+        markPanelStateChanged();
         await refreshPanel(true);
       });
     },
@@ -204,6 +206,7 @@ async function registerCommands(): Promise<void> {
           return;
         }
         await movePageWithDialog(note.id);
+        markPanelStateChanged();
         await refreshPanel(true);
       });
     },
@@ -221,6 +224,7 @@ async function registerCommands(): Promise<void> {
           return;
         }
         await promotePageToRoot(note.id);
+        markPanelStateChanged();
         await refreshPanel(true);
       });
     },
@@ -238,6 +242,7 @@ async function registerCommands(): Promise<void> {
           return;
         }
         await unlinkPageFromHierarchy(note.id);
+        markPanelStateChanged();
         await refreshPanel(true);
       });
     },
@@ -250,6 +255,7 @@ async function registerCommands(): Promise<void> {
     execute: async () => {
         await runCommand(async () => {
           const count = await repairCurrentNotebookMetadata();
+          markPanelStateChanged();
           await refreshPanel(true);
           if (count === null) return;
           await showToast(count ? `Repaired ${count} Sub-Pages metadata item${count === 1 ? '' : 's'}.` : 'No Sub-Pages repairs were needed.');
@@ -294,6 +300,10 @@ async function registerRefreshEvents(): Promise<void> {
     } else {
       scheduleSelectionRefresh();
     }
+
+    refreshPanelIfSelectedFolderChanged().catch((error) => {
+      console.error('Sub-Pages folder selection refresh failed', error);
+    });
   });
 
   await joplin.workspace.onNoteChange(async (event: any) => {
@@ -358,6 +368,7 @@ async function handlePanelMessage(message: any): Promise<any> {
 
     if (name === 'createRoot') {
       await createRootPage();
+      markPanelStateChanged();
       return panelStateResponse();
     }
 
@@ -397,37 +408,44 @@ async function handlePanelMessage(message: any): Promise<any> {
 
     if (name === 'createChild' && noteId) {
       await createChildPage(noteId);
+      markPanelStateChanged();
       return panelStateResponse();
     }
 
     if (name === 'move' && noteId) {
       await movePageWithDialog(noteId);
+      markPanelStateChanged();
       return panelStateResponse();
     }
 
     if (name === 'promote' && noteId) {
       await promotePageToRoot(noteId);
+      markPanelStateChanged();
       return panelStateResponse();
     }
 
     if (name === 'unlink' && noteId) {
       await unlinkPageFromHierarchy(noteId);
+      markPanelStateChanged();
       return panelStateResponse();
     }
 
     if (name === 'moveUp' && noteId) {
       await moveSibling(noteId, -1);
+      markPanelStateChanged();
       return panelStateResponse();
     }
 
     if (name === 'moveDown' && noteId) {
       await moveSibling(noteId, 1);
+      markPanelStateChanged();
       return panelStateResponse();
     }
 
     if (name === 'repair') {
       const count = await repairCurrentNotebookMetadata();
       if (count === null) return panelStateResponse('Repair cancelled.');
+      markPanelStateChanged();
       return panelStateResponse(count ? `Repaired ${count} metadata item${count === 1 ? '' : 's'}.` : 'No repairs were needed.');
     }
 
@@ -513,6 +531,15 @@ async function refreshPanel(force = false): Promise<void> {
   });
 }
 
+async function refreshPanelIfSelectedFolderChanged(): Promise<void> {
+  const folder = await selectedFolderSummary();
+  const selectedFolderId = folder?.id ?? null;
+  if (lastPanelFolderId !== undefined && selectedFolderId === lastPanelFolderId) return;
+
+  markPanelStateChanged();
+  schedulePanelRefresh(50);
+}
+
 async function handleNoteChangeEvent(event: any): Promise<void> {
   const noteId = changedNoteIdFromEvent(event) ?? await selectedNoteId();
   if (noteId) markNoteRecentlyChanged(noteId);
@@ -535,6 +562,7 @@ async function panelVisible(): Promise<boolean> {
 async function buildPanelState(): Promise<any> {
   try {
     const folder = await selectedFolderSummary();
+    lastPanelFolderId = folder?.id ?? null;
     if (!folder) {
       return {
         folder: null,
