@@ -15,6 +15,8 @@ The plugin does not generate extra notes or sidecar files. A note only gets Sub-
 
 The plugin renders a custom `joplin.views.panels` webview. The panel is scoped to the currently selected notebook and keeps hierarchy independent from Joplin's native note-list sorting.
 
+The panel row menu is also rendered inside this webview. Joplin's desktop note-list context menu is built by the native React/Electron note-list component and is not exposed to plugin webviews as an enumerable or reusable menu. For that reason, the panel menu delegates a curated set of common note-list actions to known Joplin commands, but it does not automatically inherit context-menu entries registered by other plugins. Third-party plugin menu items continue to work in Joplin's native note list, and Sub-Pages registers its own native note-list context-menu actions there.
+
 Collapse state is local panel state. It is not stored in synced note metadata.
 
 Tree refreshes are intentionally coarse-grained. Startup, explicit refresh, settings changes, and Sub-Pages write commands rebuild the tree. Note selection changes only update the highlight, and sync completion does not trigger a full tree rebuild.

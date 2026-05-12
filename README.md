@@ -16,6 +16,7 @@ Sub-Pages adds a notebook-scoped page tree panel to Joplin. Notes can contain ch
   - Move siblings up/down in manual sort mode
   - Repair stale metadata on demand
 - Hierarchy metadata is stored with synced Joplin note user data.
+- The panel row menu mirrors common native note-list actions, including open, tags, to-do conversion, move, duplicate, delete, copy links, and note properties, alongside Sub-Pages hierarchy actions.
 
 ## Setup in Joplin
 
@@ -38,6 +39,7 @@ Because of that, this plugin uses these v1 behaviors:
 - Collapse state is local to the panel and does not sync.
 - Mobile clients without the plugin still show ordinary Joplin notes. The hierarchy is invisible but harmless.
 - The plugin does not rewrite `note.order`.
+- The panel row menu is a custom webview menu, not Joplin's native note-list context menu. Other plugins can still add entries to Joplin's native note-list context menu, and Sub-Pages adds its own native context-menu entries there, but third-party plugin commands do not automatically appear inside the Sub-Pages panel menu unless explicit support is added for known commands.
 
 ## Sync Behavior
 
