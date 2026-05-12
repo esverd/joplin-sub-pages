@@ -92,7 +92,7 @@ async function main() {
   const search = await evalJs(`(async () => {
     const input = document.querySelector('.sub-pages-search-input');
     input.focus(); input.value = 'child'; input.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: 'child' }));
-    await new Promise(r => setTimeout(r, 350));
+    await new Promise(r => setTimeout(r, 650));
     const filteredText = document.querySelector('.sub-pages-filter-status')?.textContent;
     const rows = [...document.querySelectorAll('.sub-pages-row')].map(row => row.textContent.trim());
     input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
@@ -104,7 +104,7 @@ async function main() {
   const noResults = await evalJs(`(async () => {
     const input = document.querySelector('.sub-pages-search-input');
     input.focus(); input.value = 'zzzzz'; input.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: 'zzzzz' }));
-    await new Promise(r => setTimeout(r, 350));
+    await new Promise(r => setTimeout(r, 650));
     const empty = document.querySelector('.sub-pages-empty')?.textContent;
     document.querySelector('.sub-pages-clear-search').click();
     await new Promise(requestAnimationFrame);
@@ -114,7 +114,7 @@ async function main() {
   const bodySearch = await evalJs(`(async () => {
     const input = document.querySelector('.sub-pages-search-input');
     input.focus(); input.value = 'web'; input.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: 'web' }));
-    await new Promise(r => setTimeout(r, 350));
+    await new Promise(r => setTimeout(r, 650));
     const filteredText = document.querySelector('.sub-pages-filter-status')?.textContent;
     const rows = [...document.querySelectorAll('.sub-pages-row')].map(row => row.textContent.trim());
     document.querySelector('.sub-pages-clear-search').click();
@@ -133,7 +133,7 @@ async function main() {
     await new Promise(requestAnimationFrame);
     const input = document.querySelector('.sub-pages-search-input');
     input.focus(); input.value = 'web'; input.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: 'web' }));
-    await new Promise(r => setTimeout(r, 350));
+    await new Promise(r => setTimeout(r, 650));
     const filteredText = document.querySelector('.sub-pages-filter-status')?.textContent;
     const rows = [...document.querySelectorAll('.sub-pages-row')].map(row => row.textContent.trim());
     const messages = window.messages.filter(message => message.name === 'search').map(message => ({ query: message.query, scope: message.scope }));
@@ -149,6 +149,22 @@ async function main() {
     throw new Error(`Notebook search did not send the expected scope: ${JSON.stringify(notebookScopeSearch)}`);
   }
 
+  const multiSelect = await evalJs(`(() => {
+    let rows = [...document.querySelectorAll('.sub-pages-row[data-note-id]')];
+    rows[0].querySelector('.sub-pages-note-title').click();
+    rows = [...document.querySelectorAll('.sub-pages-row[data-note-id]')];
+    rows[1].querySelector('.sub-pages-note-title').dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true }));
+    rows = [...document.querySelectorAll('.sub-pages-row[data-note-id]')];
+    const selected = [...document.querySelectorAll('.sub-pages-row.is-panel-selected')].map(row => row.dataset.noteId);
+    const menu = rows[1].querySelector('.sub-pages-row-menu');
+    menu.open = true;
+    const menuItems = [...menu.querySelectorAll('.sub-pages-menu-item')].map(item => item.textContent.trim());
+    return { selected, menuItems };
+  })()`);
+  if (multiSelect.selected.length < 2 || !multiSelect.menuItems.some(item => item.includes('Move selected branches'))) {
+    throw new Error(`Multi-select branch move menu did not render: ${JSON.stringify(multiSelect)}`);
+  }
+
   const menuKeys = await evalJs(`(async () => {
     const trigger = document.querySelector('.sub-pages-row.is-selected .sub-pages-menu-trigger');
     trigger.focus();
@@ -162,7 +178,7 @@ async function main() {
     return { first, second, openAfterEscape: document.querySelector('.sub-pages-row-menu[open]') !== null };
   })()`);
 
-  console.log(JSON.stringify({ responsive, search, noResults, bodySearch, notebookScopeSearch, menuKeys }, null, 2));
+  console.log(JSON.stringify({ responsive, search, noResults, bodySearch, notebookScopeSearch, multiSelect, menuKeys }, null, 2));
   cdp.close();
 }
 

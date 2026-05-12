@@ -243,6 +243,10 @@ body {
   background: var(--joplin-selected-color, rgba(80, 130, 210, 0.22));
 }
 
+.sub-pages-row.is-panel-selected:not(.is-selected) {
+  background: var(--joplin-background-color-hover2, rgba(80, 130, 210, 0.1));
+}
+
 .sub-pages-row.needs-repair {
   color: var(--joplin-warning-color, #9a5b00);
 }
@@ -349,7 +353,7 @@ body {
 }
 
 .sub-pages-row-trailing {
-  margin-left: 4px;
+  margin-left: auto;
 }
 
 .sub-pages-search-results {

@@ -11,6 +11,7 @@ const COMMAND_TOGGLE_PANEL = 'subPages.togglePanel';
 const COMMAND_REFRESH_PANEL = 'subPages.refreshPanel';
 const COMMAND_CREATE_CHILD_PAGE = 'subPages.createChildPage';
 const COMMAND_MOVE_PAGE = 'subPages.movePage';
+const COMMAND_MOVE_BRANCH_TO_FOLDER = 'subPages.moveBranchToFolder';
 const COMMAND_PROMOTE_PAGE = 'subPages.promotePage';
 const COMMAND_UNLINK_PAGE = 'subPages.unlinkPage';
 const COMMAND_REPAIR_METADATA = 'subPages.repairMetadata';
@@ -29,6 +30,7 @@ const NOTE_LIST_PARITY_COMMANDS = new Set([
 const PLUGIN_ID = 'com.codex.subPages';
 const PANEL_ID = `${PLUGIN_ID}.panel`;
 const DIALOG_MOVE_PARENT = 'subPages.moveParentDialog';
+const DIALOG_MOVE_BRANCH_TO_FOLDER = 'subPages.moveBranchToFolderDialog';
 
 const SETTINGS_SECTION = 'subPages';
 const SETTING_PANEL_SORT_MODE = 'subPages.panelSortMode';
@@ -47,6 +49,13 @@ type SearchScope = 'all' | 'notebook';
 interface FolderSummary {
   id: string;
   title: string;
+}
+
+interface FolderNode {
+  id: string;
+  title: string;
+  parent_id: string;
+  children: FolderNode[];
 }
 
 interface NoteSummary {
@@ -100,6 +109,11 @@ interface MoveParentCandidate {
   path: string[];
 }
 
+interface FolderCandidate {
+  id: string;
+  path: string[];
+}
+
 interface RepairOperation {
   type: 'clearParentId' | 'setChildIds' | 'clearChildIds';
   noteId: string;
@@ -125,6 +139,7 @@ let settledRefreshTimers: any[] = [];
 let panelStateRevision = 0;
 let lastPanelFolderId: string | null | undefined = undefined;
 const recentChangeTimes = new Map<string, number>();
+const panelSearchCache = new Map<string, any>();
 
 joplin.plugins.register({
   onStart: async () => {
@@ -224,6 +239,24 @@ async function registerCommands(): Promise<void> {
   });
 
   await joplin.commands.register({
+    name: COMMAND_MOVE_BRANCH_TO_FOLDER,
+    label: 'Move Sub-Pages branch to notebook...',
+    iconName: 'fas fa-folder-open',
+    execute: async (...args: any[]) => {
+      await runCommand(async () => {
+        const noteIds = await resolveContextNoteIds(args);
+        if (!noteIds.length) {
+          await notify('Select one or more pages to move.');
+          return;
+        }
+        await moveBranchesToFolder(noteIds);
+        markPanelStateChanged();
+        await refreshPanel(true);
+      });
+    },
+  });
+
+  await joplin.commands.register({
     name: COMMAND_PROMOTE_PAGE,
     label: 'Promote page to Sub-Pages root',
     iconName: 'fas fa-level-up-alt',
@@ -282,6 +315,7 @@ async function registerMenus(): Promise<void> {
 
   await joplin.views.menuItems.create('subPages.createChildPage.context', COMMAND_CREATE_CHILD_PAGE, MenuItemLocation.NoteListContextMenu);
   await joplin.views.menuItems.create('subPages.movePage.context', COMMAND_MOVE_PAGE, MenuItemLocation.NoteListContextMenu);
+  await joplin.views.menuItems.create('subPages.moveBranchToFolder.context', COMMAND_MOVE_BRANCH_TO_FOLDER, MenuItemLocation.NoteListContextMenu);
   await joplin.views.menuItems.create('subPages.promotePage.context', COMMAND_PROMOTE_PAGE, MenuItemLocation.NoteListContextMenu);
   await joplin.views.menuItems.create('subPages.unlinkPage.context', COMMAND_UNLINK_PAGE, MenuItemLocation.NoteListContextMenu);
 
@@ -348,6 +382,7 @@ async function handlePanelMessage(message: any): Promise<any> {
   try {
     const name = typeof message?.name === 'string' ? message.name : '';
     const noteId = typeof message?.noteId === 'string' ? message.noteId : '';
+    const noteIds = panelMessageNoteIds(message, noteId);
 
     if (name === 'ready') {
       panelReady = true;
@@ -412,9 +447,9 @@ async function handlePanelMessage(message: any): Promise<any> {
       // the plugin panel/webview API. The panel fallback delegates individual high-value
       // menu items to the same internal commands where possible instead of duplicating
       // Joplin's native Electron menu.
-      await runNoteListParityCommand(name, noteId);
+      await runNoteListParityCommand(name, noteIds.length ? noteIds : [noteId]);
       if (name !== 'openNoteInNewWindow' && name !== 'startExternalEditing' && name !== 'showNoteProperties' && name !== 'setTags') {
-        markNoteRecentlyChanged(noteId);
+        for (const changedNoteId of noteIds.length ? noteIds : [noteId]) markNoteRecentlyChanged(changedNoteId);
         markPanelStateChanged();
         scheduleSettledPanelRefreshes();
         return panelStateResponse();
@@ -442,6 +477,12 @@ async function handlePanelMessage(message: any): Promise<any> {
 
     if (name === 'move' && noteId) {
       await movePageWithDialog(noteId);
+      markPanelStateChanged();
+      return panelStateResponse();
+    }
+
+    if (name === 'moveBranchToFolder' && noteId) {
+      await moveBranchesToFolder(noteIds.length ? noteIds : [noteId]);
       markPanelStateChanged();
       return panelStateResponse();
     }
@@ -496,6 +537,14 @@ async function panelStateResponse(message?: string): Promise<any> {
   return response;
 }
 
+function panelMessageNoteIds(message: any, fallbackNoteId: string): string[] {
+  const noteIds: string[] = Array.isArray(message?.noteIds)
+    ? message.noteIds.filter((id: any) => typeof id === 'string' && id)
+    : [];
+  if (fallbackNoteId && !noteIds.includes(fallbackNoteId)) noteIds.unshift(fallbackNoteId);
+  return [...new Set<string>(noteIds)];
+}
+
 async function panelSearchResponse(query: string, scope: SearchScope): Promise<any> {
   const trimmedQuery = query.trim();
   if (!trimmedQuery) {
@@ -509,6 +558,10 @@ async function panelSearchResponse(query: string, scope: SearchScope): Promise<a
   }
 
   const folder = await selectedFolderSummary();
+  const cacheKey = `${panelStateRevision}:${scope}:${folder?.id ?? ''}:${trimmedQuery.toLocaleLowerCase()}`;
+  const cached = panelSearchCache.get(cacheKey);
+  if (cached) return cached;
+
   if (!folder && scope === 'notebook') {
     return {
       ok: false,
@@ -540,13 +593,15 @@ async function panelSearchResponse(query: string, scope: SearchScope): Promise<a
       }
     }
 
-    return {
+    const response = {
       ok: true,
       query: trimmedQuery,
       scope,
       noteIds,
       externalResults,
     };
+    panelSearchCache.set(cacheKey, response);
+    return response;
   } catch (error) {
     console.warn('Sub-Pages: Joplin search failed', error);
     return {
@@ -858,6 +913,7 @@ function pruneRecentChangeTimes(): void {
 
 function markPanelStateChanged(): void {
   panelStateRevision += 1;
+  panelSearchCache.clear();
 }
 
 function sortTree(nodes: TreeNode[], parentId: string | null, sortMode: PanelSortMode, metaMap: Map<string, HierarchyMeta>): void {
@@ -1056,6 +1112,164 @@ async function movePageWithDialog(noteId: string): Promise<void> {
   const changed = await attachPageToParent(note, parent);
   if (changed) {
     await showToast(`Moved "${displayTitle(note)}" under "${displayTitle(parent)}".`);
+  }
+}
+
+async function moveBranchesToFolder(noteIds: string[]): Promise<void> {
+  const rootIds = [...new Set(noteIds)].filter(Boolean);
+  if (!rootIds.length) return;
+
+  const folders = await folderCandidates();
+  if (!folders.length) {
+    await notify('No notebooks were found.');
+    return;
+  }
+
+  const branchInfo = await branchMoveInfo(rootIds);
+  if (!branchInfo.branchRootIds.length || !branchInfo.noteIds.length) {
+    await notify('The selected pages could not be loaded.');
+    return;
+  }
+
+  const options = folders.map((folder) => {
+    return `<option value="${escapeHtml(folder.id)}">${escapeHtml(folder.path.join(' / '))}</option>`;
+  }).join('');
+  const selectedLabel = branchInfo.branchRootTitles.length === 1
+    ? `"${branchInfo.branchRootTitles[0]}"`
+    : `${branchInfo.branchRootTitles.length} selected branches`;
+
+  const handle = await joplin.views.dialogs.create(DIALOG_MOVE_BRANCH_TO_FOLDER);
+  await joplin.views.dialogs.setHtml(handle, `
+    <!doctype html>
+    <html>
+      <head>
+        <style>
+          html, body {
+            box-sizing: border-box;
+            color: var(--joplin-color, #222);
+            font-family: var(--joplin-font-family, sans-serif);
+            font-size: var(--joplin-font-size, 13px);
+            margin: 0;
+            min-height: 180px;
+          }
+          *, *::before, *::after { box-sizing: inherit; }
+          form { min-width: 380px; padding: 16px; }
+          p { margin: 0 0 12px; }
+          .detail { color: var(--joplin-color-faded, #666); font-size: 12px; margin-bottom: 16px; }
+          label { display: block; font-weight: 600; }
+          select {
+            background: var(--joplin-background-color, #fff);
+            color: var(--joplin-color, #222);
+            display: block;
+            font: inherit;
+            font-weight: normal;
+            margin-top: 8px;
+            width: 100%;
+          }
+        </style>
+      </head>
+      <body>
+        <form name="moveBranch">
+          <p>Choose a notebook for ${escapeHtml(selectedLabel)}.</p>
+          <p class="detail">${branchInfo.noteIds.length} page${branchInfo.noteIds.length === 1 ? '' : 's'} will move. Child pages stay linked to their parents.</p>
+          <label>
+            Notebook
+            <select name="folderId">
+              ${options}
+            </select>
+          </label>
+        </form>
+      </body>
+    </html>
+  `);
+  await joplin.views.dialogs.setButtons(handle, [
+    { id: 'ok', title: 'Move' },
+    { id: 'cancel', title: 'Cancel' },
+  ]);
+  await joplin.views.dialogs.setFitToContent(handle, false);
+
+  const result = await joplin.views.dialogs.open(handle);
+  if (result.id !== 'ok') return;
+
+  const folderId = result.formData?.moveBranch?.folderId;
+  if (!folderId || typeof folderId !== 'string') return;
+
+  for (const branchRootId of branchInfo.branchRootIds) {
+    const rootMeta = await getMeta(branchRootId);
+    if (rootMeta.parentId) {
+      await removeChildFromParent(rootMeta.parentId, branchRootId);
+      await clearParentId(branchRootId);
+    }
+  }
+
+  for (const movingNoteId of branchInfo.noteIds) {
+    await joplin.data.put(['notes', movingNoteId], null, {
+      parent_id: folderId,
+    });
+    markNoteRecentlyChanged(movingNoteId);
+  }
+
+  await showToast(`Moved ${branchInfo.noteIds.length} page${branchInfo.noteIds.length === 1 ? '' : 's'} to notebook.`);
+}
+
+async function branchMoveInfo(selectedNoteIds: string[]): Promise<{ branchRootIds: string[]; branchRootTitles: string[]; noteIds: string[] }> {
+  const selected = new Set(selectedNoteIds);
+  const selectedNotes = (await Promise.all([...selected].map((noteId) => getNote(noteId))))
+    .filter((note): note is NoteSummary => !!note);
+  const selectedNoteMap = toNoteMap(selectedNotes);
+  const notesByNotebook = new Map<string, NoteSummary[]>();
+  const metaByNotebook = new Map<string, Map<string, HierarchyMeta>>();
+
+  for (const note of selectedNotes) {
+    if (!notesByNotebook.has(note.parent_id)) {
+      const notes = await listNotebookNotes(note.parent_id);
+      notesByNotebook.set(note.parent_id, notes);
+      metaByNotebook.set(note.parent_id, await buildMetaMap(notes));
+    }
+  }
+
+  const branchRootIds = selectedNotes
+    .filter((note) => !hasSelectedAncestor(note, selected, selectedNoteMap, metaByNotebook.get(note.parent_id) ?? new Map()))
+    .map((note) => note.id);
+  const branchRootTitles = branchRootIds.map((id) => displayTitle(selectedNoteMap.get(id)));
+  const output = new Set<string>();
+
+  for (const branchRootId of branchRootIds) {
+    const root = selectedNoteMap.get(branchRootId);
+    if (!root) continue;
+    const notes = notesByNotebook.get(root.parent_id) ?? [];
+    const metaMap = metaByNotebook.get(root.parent_id) ?? new Map();
+    collectBranchIds(branchRootId, notes, metaMap, output);
+  }
+
+  return {
+    branchRootIds,
+    branchRootTitles,
+    noteIds: [...output],
+  };
+}
+
+function hasSelectedAncestor(note: NoteSummary, selectedIds: Set<string>, selectedNoteMap: Map<string, NoteSummary>, metaMap: Map<string, HierarchyMeta>): boolean {
+  let parentId = metaMap.get(note.id)?.parentId ?? null;
+  const seen = new Set<string>();
+
+  while (parentId && !seen.has(parentId)) {
+    if (selectedIds.has(parentId)) return true;
+    seen.add(parentId);
+    const selectedParent = selectedNoteMap.get(parentId);
+    if (selectedParent && selectedParent.parent_id !== note.parent_id) return false;
+    parentId = metaMap.get(parentId)?.parentId ?? null;
+  }
+
+  return false;
+}
+
+function collectBranchIds(rootId: string, notes: NoteSummary[], metaMap: Map<string, HierarchyMeta>, output: Set<string>): void {
+  if (output.has(rootId)) return;
+  output.add(rootId);
+
+  for (const note of notes) {
+    if (metaMap.get(note.id)?.parentId === rootId) collectBranchIds(note.id, notes, metaMap, output);
   }
 }
 
@@ -1319,6 +1533,27 @@ async function resolveContextNote(args: any[]): Promise<NoteSummary | null> {
   return getNote(noteId);
 }
 
+async function resolveContextNoteIds(args: any[]): Promise<string[]> {
+  if (Array.isArray(args) && args.length) {
+    const context = args[0];
+    if (context && Array.isArray(context.noteIds) && context.noteIds.length) {
+      return [...new Set<string>(context.noteIds.filter((noteId: any) => typeof noteId === 'string' && noteId))];
+    }
+  }
+
+  try {
+    const noteIds = await joplin.workspace.selectedNoteIds();
+    if (Array.isArray(noteIds)) {
+      return [...new Set<string>(noteIds.filter((noteId: any) => typeof noteId === 'string' && noteId))];
+    }
+  } catch {
+    // Fall back to selectedNote below.
+  }
+
+  const noteId = await resolveContextNoteId([]);
+  return noteId ? [noteId] : [];
+}
+
 async function resolveContextNoteId(args: any[]): Promise<string | null> {
   if (Array.isArray(args) && args.length) {
     const context = args[0];
@@ -1417,6 +1652,64 @@ async function listNotebookNotes(notebookId: string): Promise<NoteSummary[]> {
     if (!response.has_more) break;
     page += 1;
   }
+
+  return output;
+}
+
+async function listFolders(): Promise<FolderNode[]> {
+  const output: FolderNode[] = [];
+  let page = 1;
+
+  while (true) {
+    const response = await joplin.data.get(['folders'], {
+      fields: ['id', 'title', 'parent_id'],
+      page,
+      limit: 100,
+    }) as PageResponse<any>;
+
+    const items = Array.isArray(response.items) ? response.items : [];
+    for (const item of items) collectFolderNodes(item, output);
+
+    if (!response.has_more) break;
+    page += 1;
+  }
+
+  return output;
+}
+
+function collectFolderNodes(value: any, output: FolderNode[]): void {
+  if (!value || typeof value.id !== 'string') return;
+  const children = Array.isArray(value.children) ? value.children : [];
+  const folder: FolderNode = {
+    id: value.id,
+    title: typeof value.title === 'string' && value.title.trim() ? value.title.trim() : 'Untitled notebook',
+    parent_id: typeof value.parent_id === 'string' ? value.parent_id : '',
+    children: [],
+  };
+  output.push(folder);
+  for (const child of children) collectFolderNodes(child, output);
+}
+
+async function folderCandidates(): Promise<FolderCandidate[]> {
+  const folders = await listFolders();
+  const byParent = new Map<string, FolderNode[]>();
+  for (const folder of folders) {
+    const siblings = byParent.get(folder.parent_id) ?? [];
+    siblings.push(folder);
+    byParent.set(folder.parent_id, siblings);
+  }
+  for (const siblings of byParent.values()) siblings.sort((a, b) => compareTitles(a.title, b.title));
+
+  const output: FolderCandidate[] = [];
+  const visit = (folder: FolderNode, path: string[]) => {
+    const nextPath = [...path, folder.title];
+    output.push({ id: folder.id, path: nextPath });
+    for (const child of byParent.get(folder.id) ?? []) visit(child, nextPath);
+  };
+
+  const folderIds = new Set(folders.map((folder) => folder.id));
+  const roots = folders.filter((folder) => !folder.parent_id || !folderIds.has(folder.parent_id));
+  for (const root of roots) visit(root, []);
 
   return output;
 }
@@ -1694,10 +1987,13 @@ async function openNote(noteId: string): Promise<void> {
   }
 }
 
-async function runNoteListParityCommand(commandName: string, noteId: string): Promise<void> {
+async function runNoteListParityCommand(commandName: string, noteIds: string[]): Promise<void> {
+  const noteId = noteIds[0];
+  if (!noteId) return;
+
   const listArgCommands = new Set(['setTags', 'toggleNoteType', 'moveToFolder', 'duplicateNote', 'deleteNote']);
-  const primaryArg = listArgCommands.has(commandName) ? [noteId] : noteId;
-  const fallbackArg = listArgCommands.has(commandName) ? noteId : [noteId];
+  const primaryArg = listArgCommands.has(commandName) ? noteIds : noteId;
+  const fallbackArg = listArgCommands.has(commandName) ? noteId : noteIds;
 
   try {
     await joplin.commands.execute(commandName, primaryArg);

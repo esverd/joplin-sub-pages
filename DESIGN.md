@@ -19,7 +19,11 @@ The panel row menu is also rendered inside this webview. Joplin's desktop note-l
 
 Panel search uses Joplin's own search endpoint rather than a local title-only filter. Search can be scoped to the selected notebook or all notebooks. Results from the current notebook are shown in the hierarchy, while matches from other notebooks are shown as a separate flat section that opens the native note when selected.
 
-Native note-list drag/drop and the native search box are not exposed as movable webview components. Cross-notebook moves are delegated to Joplin's `moveToFolder` command so the plugin does not maintain a parallel notebook picker or try to fake native drag/drop.
+Panel search keeps the last completed result set visible while a new query is debounced. This avoids replacing the whole tree on every keystroke; the panel only re-renders the result list when Joplin returns the next search response.
+
+Native note-list drag/drop and the native search box are not exposed as movable webview components. For simple note moves, the panel delegates to Joplin's `moveToFolder` command. For hierarchy-aware moves, Sub-Pages uses Joplin's data API to update the selected branch notes' notebook IDs and clears only the moved branch root's old parent link. This keeps descendants in the same notebook as their parent without trying to emulate native drag/drop internals.
+
+The panel supports local multi-selection with Ctrl-click and Shift-click. That selection is passed to native list-style commands where possible, and to Sub-Pages branch commands when hierarchy metadata needs to be preserved.
 
 Collapse state is local panel state. It is not stored in synced note metadata.
 
