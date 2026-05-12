@@ -92,7 +92,7 @@ async function main() {
   const search = await evalJs(`(async () => {
     const input = document.querySelector('.sub-pages-search-input');
     input.focus(); input.value = 'child'; input.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: 'child' }));
-    await new Promise(requestAnimationFrame);
+    await new Promise(r => setTimeout(r, 350));
     const filteredText = document.querySelector('.sub-pages-filter-status')?.textContent;
     const rows = [...document.querySelectorAll('.sub-pages-row')].map(row => row.textContent.trim());
     input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
@@ -104,12 +104,26 @@ async function main() {
   const noResults = await evalJs(`(async () => {
     const input = document.querySelector('.sub-pages-search-input');
     input.focus(); input.value = 'zzzzz'; input.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: 'zzzzz' }));
-    await new Promise(requestAnimationFrame);
+    await new Promise(r => setTimeout(r, 350));
     const empty = document.querySelector('.sub-pages-empty')?.textContent;
     document.querySelector('.sub-pages-clear-search').click();
     await new Promise(requestAnimationFrame);
     return { empty, afterClearValue: document.querySelector('.sub-pages-search-input').value, activeClass: document.activeElement.className };
   })()`);
+
+  const bodySearch = await evalJs(`(async () => {
+    const input = document.querySelector('.sub-pages-search-input');
+    input.focus(); input.value = 'web'; input.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: 'web' }));
+    await new Promise(r => setTimeout(r, 350));
+    const filteredText = document.querySelector('.sub-pages-filter-status')?.textContent;
+    const rows = [...document.querySelectorAll('.sub-pages-row')].map(row => row.textContent.trim());
+    document.querySelector('.sub-pages-clear-search').click();
+    await new Promise(requestAnimationFrame);
+    return { filteredText, rows };
+  })()`);
+  if (!bodySearch.rows.some(row => row.includes('Delta Root'))) {
+    throw new Error(`Joplin-backed body search did not surface the body-only match: ${JSON.stringify(bodySearch)}`);
+  }
 
   const menuKeys = await evalJs(`(async () => {
     const trigger = document.querySelector('.sub-pages-row.is-selected .sub-pages-menu-trigger');
@@ -124,7 +138,7 @@ async function main() {
     return { first, second, openAfterEscape: document.querySelector('.sub-pages-row-menu[open]') !== null };
   })()`);
 
-  console.log(JSON.stringify({ responsive, search, noResults, menuKeys }, null, 2));
+  console.log(JSON.stringify({ responsive, search, noResults, bodySearch, menuKeys }, null, 2));
   cdp.close();
 }
 

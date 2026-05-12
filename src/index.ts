@@ -366,6 +366,10 @@ async function handlePanelMessage(message: any): Promise<any> {
       };
     }
 
+    if (name === 'search') {
+      return await panelSearchResponse(typeof message?.query === 'string' ? message.query : '');
+    }
+
     if (name === 'createRoot') {
       await createRootPage();
       markPanelStateChanged();
@@ -466,6 +470,72 @@ async function panelStateResponse(message?: string): Promise<any> {
   };
   if (message) response.message = message;
   return response;
+}
+
+async function panelSearchResponse(query: string): Promise<any> {
+  const trimmedQuery = query.trim();
+  if (!trimmedQuery) {
+    return {
+      ok: true,
+      query: '',
+      noteIds: [],
+    };
+  }
+
+  const folder = await selectedFolderSummary();
+  if (!folder) {
+    return {
+      ok: false,
+      query: trimmedQuery,
+      noteIds: [],
+      message: 'No notebook is selected.',
+    };
+  }
+
+  try {
+    const notes = await listNotebookNotes(folder.id);
+    const notebookNoteIds = new Set(notes.map(note => note.id));
+    const noteIds = await searchNoteIds(trimmedQuery, notebookNoteIds);
+    return {
+      ok: true,
+      query: trimmedQuery,
+      noteIds,
+    };
+  } catch (error) {
+    console.warn('Sub-Pages: Joplin search failed', error);
+    return {
+      ok: false,
+      query: trimmedQuery,
+      noteIds: [],
+      message: 'Search failed. Try Refresh Sub-Pages panel or restart Joplin.',
+    };
+  }
+}
+
+async function searchNoteIds(query: string, allowedNoteIds: Set<string>): Promise<string[]> {
+  const output: string[] = [];
+  let page = 1;
+
+  while (true) {
+    const response = await joplin.data.get(['search'], {
+      query,
+      type: 'note',
+      fields: ['id'],
+      page,
+      limit: 100,
+    }) as PageResponse<any>;
+
+    const items = Array.isArray(response.items) ? response.items : [];
+    for (const item of items) {
+      if (!item || typeof item.id !== 'string') continue;
+      if (allowedNoteIds.has(item.id)) output.push(item.id);
+    }
+
+    if (!response.has_more) break;
+    page += 1;
+  }
+
+  return output;
 }
 
 function schedulePanelRefresh(delay = 150): void {

@@ -9,6 +9,10 @@
   let selectionSyncInFlight = false;
   let stateRevision = 0;
   let stateSyncInFlight = false;
+  let searchState = { query: '', noteIds: [], loading: false, message: '' };
+  let searchDebounceTimer = null;
+  let searchRequestSerial = 0;
+  const searchDebounceMs = 250;
 
   const icons = {
     chevronDown: '<svg viewBox="0 0 16 16"><path d="m4 6 4 4 4-4"/></svg>',
@@ -47,6 +51,7 @@
       currentState = response.state;
       statusText = response.message || '';
       render();
+      if (searchQuery.trim()) scheduleSearch(0);
       return;
     }
 
@@ -118,17 +123,19 @@
     if (currentState.error) {
       root.appendChild(element('div', { className: 'sub-pages-empty' }, [currentState.error]));
     } else {
-      const filterText = normalizedSearchQuery();
-      const visibleNodes = filteredRootNodes(filterText);
+      const search = currentSearch();
+      const visibleNodes = filteredRootNodes(search);
 
-      if (!filterText && shouldShowOnboarding()) root.appendChild(renderOnboarding());
+      if (!search.active && shouldShowOnboarding()) root.appendChild(renderOnboarding());
 
       if (currentState.nodes.length && visibleNodes.length) {
         const tree = element('div', { className: 'sub-pages-tree', role: 'tree' });
-        visibleNodes.forEach((node) => renderNode(node, 0, tree, filterText));
+        visibleNodes.forEach((node) => renderNode(node, 0, tree, search));
         root.appendChild(tree);
-      } else if (filterText) {
-        root.appendChild(element('div', { className: 'sub-pages-empty' }, [`No pages match “${searchQuery.trim()}”.`]));
+      } else if (search.active && search.loading) {
+        root.appendChild(element('div', { className: 'sub-pages-empty' }, ['Searching Joplin...']));
+      } else if (search.active) {
+        root.appendChild(element('div', { className: 'sub-pages-empty' }, [`No pages match “${search.query}”.`]));
       }
     }
 
@@ -163,9 +170,9 @@
   }
 
   function renderSearch() {
-    const filterText = normalizedSearchQuery();
-    const active = !!filterText;
-    const visibleCount = active ? countVisibleFilterNodes(currentState.nodes, filterText) : countTreeNodes(currentState.nodes);
+    const search = currentSearch();
+    const active = search.active;
+    const visibleCount = active ? countVisibleSearchNodes(currentState.nodes, search) : countTreeNodes(currentState.nodes);
     const totalCount = countTreeNodes(currentState.nodes);
     const wrap = element('div', { className: ['sub-pages-search', active ? 'is-active' : ''].filter(Boolean).join(' ') });
 
@@ -174,7 +181,7 @@
       type: 'search',
       value: searchQuery,
       placeholder: 'Search pages...',
-      ariaLabel: 'Search Sub-Pages by title',
+      ariaLabel: 'Search Sub-Pages with Joplin search',
       autocomplete: 'off',
     });
     input.dataset.action = 'search';
@@ -182,8 +189,11 @@
 
     if (active) {
       wrap.appendChild(actionButton('clearSearch', null, 'Clear', 'Clear search', false, 'sub-pages-clear-search'));
+      const status = search.loading
+        ? 'Searching Joplin...'
+        : `Search: showing ${visibleCount} of ${totalCount} page${totalCount === 1 ? '' : 's'}. Matching branches are expanded temporarily.`;
       wrap.appendChild(element('div', { className: 'sub-pages-filter-status' }, [
-        `Filtering: showing ${visibleCount} of ${totalCount} page${totalCount === 1 ? '' : 's'}. Matching branches are expanded temporarily.`,
+        search.message ? `${status} ${search.message}` : status,
       ]));
     }
 
@@ -219,11 +229,11 @@
     return wrap;
   }
 
-  function renderNode(node, depth, container, filterText) {
-    const visibleChildren = filterText
-      ? (node.children || []).filter((child) => nodeMatchesFilter(child, filterText))
+  function renderNode(node, depth, container, search) {
+    const visibleChildren = search.active
+      ? (node.children || []).filter((child) => nodeMatchesSearch(child, search))
       : (node.children || []);
-    const filtering = !!filterText;
+    const filtering = search.active;
     const row = element('div', {
       className: [
         'sub-pages-row',
@@ -254,30 +264,34 @@
 
     const title = actionButton('openNote', node.id, '', `Open ${node.title || 'Untitled page'}`);
     title.classList.add('sub-pages-note-title');
-    appendHighlightedTitle(title, node.title || 'Untitled page', filterText);
+    appendHighlightedTitle(title, node.title || 'Untitled page', search.normalizedQuery);
     if (node.isTodo) title.classList.add(node.todoCompleted ? 'is-done' : 'is-todo');
     main.appendChild(title);
-
-    if (hasChildren) {
-      const hiddenChildCount = filtering ? node.children.length - visibleChildren.length : 0;
-      const titleSuffix = hiddenChildCount > 0 ? ` (${hiddenChildCount} hidden by search)` : '';
-      main.appendChild(element('span', { className: 'sub-pages-child-count', title: `${node.children.length} direct child page${node.children.length === 1 ? '' : 's'}${titleSuffix}` }, [String(node.children.length)]));
-    }
 
     if (node.repairReason) {
       main.appendChild(element('span', { className: 'sub-pages-badge', title: node.repairReason }, ['Needs repair']));
     }
+
+    const trailing = element('span', { className: 'sub-pages-row-trailing' });
     const actions = element('span', { className: 'sub-pages-row-actions' });
     actions.appendChild(iconButton('createChild', node.id, 'plus', 'Create child page', false, 'sub-pages-icon-button'));
     actions.appendChild(renderNodeMenu(node, hasChildren, depth));
-    main.appendChild(actions);
+    trailing.appendChild(actions);
+
+    if (hasChildren) {
+      const hiddenChildCount = filtering ? node.children.length - visibleChildren.length : 0;
+      const titleSuffix = hiddenChildCount > 0 ? ` (${hiddenChildCount} hidden by search)` : '';
+      trailing.appendChild(element('span', { className: 'sub-pages-child-count', title: `${node.children.length} direct child page${node.children.length === 1 ? '' : 's'}${titleSuffix}` }, [String(node.children.length)]));
+    }
+
+    main.appendChild(trailing);
 
     row.appendChild(main);
 
     container.appendChild(row);
 
     if (hasVisibleChildren && !isCollapsed) {
-      visibleChildren.forEach((child) => renderNode(child, depth + 1, container, filterText));
+      visibleChildren.forEach((child) => renderNode(child, depth + 1, container, search));
     }
   }
 
@@ -285,22 +299,46 @@
     return searchQuery.trim().toLocaleLowerCase();
   }
 
-  function filteredRootNodes(filterText) {
+  function currentSearch() {
+    const query = searchQuery.trim();
+    if (!query) {
+      return {
+        active: false,
+        query: '',
+        normalizedQuery: '',
+        loading: false,
+        message: '',
+        matchIds: new Set(),
+      };
+    }
+
+    const ready = searchState.query === query;
+    return {
+      active: true,
+      query,
+      normalizedQuery: normalizedSearchQuery(),
+      loading: !ready || !!searchState.loading,
+      message: ready ? (searchState.message || '') : '',
+      matchIds: new Set(ready ? (searchState.noteIds || []) : []),
+    };
+  }
+
+  function filteredRootNodes(search) {
     const nodes = currentState && currentState.nodes ? currentState.nodes : [];
-    if (!filterText) return nodes;
-    return nodes.filter((node) => nodeMatchesFilter(node, filterText));
+    if (!search.active) return nodes;
+    return nodes.filter((node) => nodeMatchesSearch(node, search));
   }
 
-  function nodeMatchesFilter(node, filterText) {
-    if (!filterText) return true;
-    if (String(node.title || '').toLocaleLowerCase().includes(filterText)) return true;
-    return (node.children || []).some((child) => nodeMatchesFilter(child, filterText));
+  function nodeMatchesSearch(node, search) {
+    if (!search.active) return true;
+    if (search.matchIds.has(node.id)) return true;
+    return (node.children || []).some((child) => nodeMatchesSearch(child, search));
   }
 
-  function countVisibleFilterNodes(nodes, filterText) {
+  function countVisibleSearchNodes(nodes, search) {
     return (nodes || []).reduce((count, node) => {
-      if (!nodeMatchesFilter(node, filterText)) return count;
-      return count + 1 + countVisibleFilterNodes(node.children, filterText);
+      if (!nodeMatchesSearch(node, search)) return count;
+      return count + 1 + countVisibleSearchNodes(node.children, search);
     }, 0);
   }
 
@@ -491,6 +529,7 @@
 
     if (action === 'clearSearch') {
       searchQuery = '';
+      resetSearchState();
       closeOpenMenus();
       render();
       focusSearchInput();
@@ -527,6 +566,7 @@
 
     const cursorPosition = input.selectionStart;
     searchQuery = input.value;
+    scheduleSearch();
     closeOpenMenus();
     render();
     focusSearchInput(cursorPosition);
@@ -554,6 +594,7 @@
     if (searchQuery) {
       event.preventDefault();
       searchQuery = '';
+      resetSearchState();
       render();
       focusSearchInput();
     }
@@ -605,6 +646,82 @@
     input.focus();
     const position = typeof cursorPosition === 'number' ? cursorPosition : input.value.length;
     if (typeof input.setSelectionRange === 'function') input.setSelectionRange(position, position);
+  }
+
+  function resetSearchState() {
+    if (searchDebounceTimer) {
+      window.clearTimeout(searchDebounceTimer);
+      searchDebounceTimer = null;
+    }
+    searchRequestSerial += 1;
+    searchState = { query: '', noteIds: [], loading: false, message: '' };
+  }
+
+  function scheduleSearch(delay) {
+    if (searchDebounceTimer) window.clearTimeout(searchDebounceTimer);
+
+    const query = searchQuery.trim();
+    searchRequestSerial += 1;
+    const requestId = searchRequestSerial;
+
+    if (!query) {
+      searchDebounceTimer = null;
+      searchState = { query: '', noteIds: [], loading: false, message: '' };
+      return;
+    }
+
+    searchState = {
+      query,
+      noteIds: searchState.query === query ? (searchState.noteIds || []) : [],
+      loading: true,
+      message: '',
+    };
+
+    searchDebounceTimer = window.setTimeout(() => {
+      searchDebounceTimer = null;
+      runSearch(query, requestId);
+    }, typeof delay === 'number' ? delay : searchDebounceMs);
+  }
+
+  function runSearch(query, requestId) {
+    if (!api || typeof api.postMessage !== 'function') {
+      if (requestId !== searchRequestSerial) return;
+      searchState = {
+        query,
+        noteIds: [],
+        loading: false,
+        message: 'Joplin search is unavailable.',
+      };
+      render();
+      return;
+    }
+
+    Promise.resolve(api.postMessage({ name: 'search', query }))
+      .then((response) => {
+        if (requestId !== searchRequestSerial || query !== searchQuery.trim()) return;
+        const noteIds = response && Array.isArray(response.noteIds)
+          ? response.noteIds.filter((id) => typeof id === 'string')
+          : [];
+        searchState = {
+          query: response && typeof response.query === 'string' ? response.query : query,
+          noteIds,
+          loading: false,
+          message: response && response.ok === false && response.message ? response.message : '',
+        };
+        render();
+        focusSearchInput();
+      })
+      .catch((error) => {
+        if (requestId !== searchRequestSerial || query !== searchQuery.trim()) return;
+        searchState = {
+          query,
+          noteIds: [],
+          loading: false,
+          message: error && error.message ? error.message : String(error),
+        };
+        render();
+        focusSearchInput();
+      });
   }
 
   function openMenu(menu, options) {

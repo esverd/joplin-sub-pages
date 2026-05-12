@@ -105,6 +105,7 @@ body {
 }
 
 .sub-pages-header-actions,
+.sub-pages-row-trailing,
 .sub-pages-row-actions {
   align-items: center;
   display: inline-flex;
@@ -307,6 +308,10 @@ body {
   text-align: center;
 }
 
+.sub-pages-row-trailing {
+  margin-left: 4px;
+}
+
 .sub-pages-note-title.is-todo::before {
   content: "[ ] ";
 }
@@ -330,7 +335,6 @@ body {
 .sub-pages-row-actions {
   background: transparent;
   justify-content: flex-end;
-  margin-left: 4px;
   opacity: 0;
   padding-left: 0;
   pointer-events: none;
