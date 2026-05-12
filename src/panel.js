@@ -267,12 +267,12 @@
     if (node.repairReason) {
       main.appendChild(element('span', { className: 'sub-pages-badge', title: node.repairReason }, ['Needs repair']));
     }
-    row.appendChild(main);
-
     const actions = element('span', { className: 'sub-pages-row-actions' });
     actions.appendChild(iconButton('createChild', node.id, 'plus', 'Create child page', false, 'sub-pages-icon-button'));
     actions.appendChild(renderNodeMenu(node, hasChildren, depth));
-    row.appendChild(actions);
+    main.appendChild(actions);
+
+    row.appendChild(main);
 
     container.appendChild(row);
 

@@ -75,8 +75,17 @@ async function main() {
       menu.open = true; menu.classList.add('opens-up');
       const panel = row && row.querySelector('.sub-pages-menu').getBoundingClientRect();
       menu.open = false; menu.classList.remove('opens-up');
-      return { width: innerWidth, docClient: document.documentElement.clientWidth, bodyScroll: document.body.scrollWidth, titleWidth: title && title.width, actionsLeft: actions && actions.left, titleRight: title && title.right, menuLeft: panel && panel.left, menuRight: panel && panel.right, overflow: over };
+      return { width: innerWidth, docClient: document.documentElement.clientWidth, bodyScroll: document.body.scrollWidth, titleWidth: title && title.width, actionsLeft: actions && actions.left, actionsRight: actions && actions.right, titleRight: title && title.right, menuLeft: panel && panel.left, menuRight: panel && panel.right, overflow: over };
     })()`));
+  }
+
+  const layoutFailures = responsive.filter(result => (
+    result.bodyScroll > result.docClient + 1
+    || result.actionsLeft < 0
+    || result.actionsRight > result.docClient + 1
+  ));
+  if (layoutFailures.length) {
+    throw new Error(`Responsive row action layout failed: ${JSON.stringify(layoutFailures)}`);
   }
 
   await setViewport(360);

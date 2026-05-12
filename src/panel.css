@@ -8,9 +8,9 @@ body,
   box-sizing: border-box;
   height: 100%;
   margin: 0;
-  max-width: 100vw;
+  max-width: 100%;
   min-width: 0;
-  width: 100vw;
+  width: 100%;
 }
 
 *,
@@ -29,11 +29,11 @@ body {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  max-width: 100vw;
+  max-width: 100%;
   min-width: 0;
   overflow-x: hidden;
   padding: 8px;
-  width: 100vw;
+  width: 100%;
 }
 
 .sub-pages-loading,
@@ -200,6 +200,8 @@ body {
   display: flex;
   gap: 4px;
   min-width: 0;
+  overflow: hidden;
+  width: 100%;
 }
 
 .sub-pages-row:hover {
@@ -283,8 +285,9 @@ body {
 }
 
 .sub-pages-note-title {
-  flex: 1 1 auto;
+  flex: 0 1 auto;
   justify-content: flex-start;
+  max-width: min(30ch, 100%);
   min-width: 0;
   overflow: hidden;
   text-align: left;
@@ -325,15 +328,13 @@ body {
 }
 
 .sub-pages-row-actions {
-  background: linear-gradient(90deg, transparent, var(--joplin-background-color, #fff) 12px);
+  background: transparent;
   justify-content: flex-end;
+  margin-left: 4px;
   opacity: 0;
-  padding-left: 14px;
+  padding-left: 0;
   pointer-events: none;
-  position: absolute;
-  right: 4px;
-  top: 50%;
-  transform: translateY(-50%);
+  position: static;
   visibility: hidden;
   width: auto;
   z-index: 4;
@@ -352,21 +353,13 @@ body {
   z-index: 20;
 }
 
-.sub-pages-row:hover .sub-pages-note-title,
-.sub-pages-row.is-selected .sub-pages-note-title,
-.sub-pages-row:focus-within .sub-pages-note-title,
-.sub-pages-row.has-open-menu .sub-pages-note-title {
-  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 58px), transparent);
-  mask-image: linear-gradient(to right, #000 calc(100% - 58px), transparent);
-}
-
 .sub-pages-row:hover .sub-pages-row-actions,
 .sub-pages-row.has-open-menu .sub-pages-row-actions {
-  background: linear-gradient(90deg, transparent, var(--joplin-background-color-hover3, #f2f2f2) 12px);
+  background: transparent;
 }
 
 .sub-pages-row.is-selected .sub-pages-row-actions {
-  background: linear-gradient(90deg, transparent, var(--joplin-selected-color, #e4eaf5) 12px);
+  background: transparent;
 }
 
 .sub-pages-badge {
