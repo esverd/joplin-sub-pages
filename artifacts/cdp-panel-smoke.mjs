@@ -124,6 +124,30 @@ async function main() {
   if (!bodySearch.rows.some(row => row.includes('Delta Root'))) {
     throw new Error(`Joplin-backed body search did not surface the body-only match: ${JSON.stringify(bodySearch)}`);
   }
+  if (!bodySearch.rows.some(row => row.includes('Archive Web Capture') && row.includes('Archive'))) {
+    throw new Error(`All-notebooks search did not surface external notebook matches: ${JSON.stringify(bodySearch)}`);
+  }
+
+  const notebookScopeSearch = await evalJs(`(async () => {
+    document.querySelector('button[data-action="setSearchScope"][data-scope="notebook"]').click();
+    await new Promise(requestAnimationFrame);
+    const input = document.querySelector('.sub-pages-search-input');
+    input.focus(); input.value = 'web'; input.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: 'web' }));
+    await new Promise(r => setTimeout(r, 350));
+    const filteredText = document.querySelector('.sub-pages-filter-status')?.textContent;
+    const rows = [...document.querySelectorAll('.sub-pages-row')].map(row => row.textContent.trim());
+    const messages = window.messages.filter(message => message.name === 'search').map(message => ({ query: message.query, scope: message.scope }));
+    document.querySelector('.sub-pages-clear-search').click();
+    document.querySelector('button[data-action="setSearchScope"][data-scope="all"]').click();
+    await new Promise(requestAnimationFrame);
+    return { filteredText, rows, messages };
+  })()`);
+  if (notebookScopeSearch.rows.some(row => row.includes('Archive Web Capture'))) {
+    throw new Error(`Notebook-scoped search leaked external matches: ${JSON.stringify(notebookScopeSearch)}`);
+  }
+  if (!notebookScopeSearch.messages.some(message => message.query === 'web' && message.scope === 'notebook')) {
+    throw new Error(`Notebook search did not send the expected scope: ${JSON.stringify(notebookScopeSearch)}`);
+  }
 
   const menuKeys = await evalJs(`(async () => {
     const trigger = document.querySelector('.sub-pages-row.is-selected .sub-pages-menu-trigger');
@@ -138,7 +162,7 @@ async function main() {
     return { first, second, openAfterEscape: document.querySelector('.sub-pages-row-menu[open]') !== null };
   })()`);
 
-  console.log(JSON.stringify({ responsive, search, noResults, bodySearch, menuKeys }, null, 2));
+  console.log(JSON.stringify({ responsive, search, noResults, bodySearch, notebookScopeSearch, menuKeys }, null, 2));
   cdp.close();
 }
 

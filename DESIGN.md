@@ -15,7 +15,11 @@ The plugin does not generate extra notes or sidecar files. A note only gets Sub-
 
 The plugin renders a custom `joplin.views.panels` webview. The panel is scoped to the currently selected notebook and keeps hierarchy independent from Joplin's native note-list sorting.
 
-The panel row menu is also rendered inside this webview. Joplin's desktop note-list context menu is built by the native React/Electron note-list component and is not exposed to plugin webviews as an enumerable or reusable menu. For that reason, the panel menu delegates a curated set of common note-list actions to known Joplin commands, but it does not automatically inherit context-menu entries registered by other plugins. Third-party plugin menu items continue to work in Joplin's native note list, and Sub-Pages registers its own native note-list context-menu actions there.
+The panel row menu is also rendered inside this webview. Joplin's desktop note-list context menu is built by the native React/Electron note-list component and is not exposed to plugin webviews as an enumerable or reusable menu. For that reason, the panel menu delegates a curated set of common note-list actions to known Joplin commands, but it does not automatically inherit context-menu entries registered by other plugins. Third-party plugin menu items continue to work in Joplin's native note list, and Sub-Pages registers its own native note-list context-menu actions there. The panel includes a command palette bridge that first selects the target note, then opens Joplin's command palette so native and plugin commands can still be reached without cloning every context-menu item.
+
+Panel search uses Joplin's own search endpoint rather than a local title-only filter. Search can be scoped to the selected notebook or all notebooks. Results from the current notebook are shown in the hierarchy, while matches from other notebooks are shown as a separate flat section that opens the native note when selected.
+
+Native note-list drag/drop and the native search box are not exposed as movable webview components. Cross-notebook moves are delegated to Joplin's `moveToFolder` command so the plugin does not maintain a parallel notebook picker or try to fake native drag/drop.
 
 Collapse state is local panel state. It is not stored in synced note metadata.
 

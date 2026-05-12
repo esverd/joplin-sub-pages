@@ -7,7 +7,7 @@ Sub-Pages adds a notebook-scoped page tree panel to Joplin. Notes can contain ch
 - A dedicated **Sub-Pages** panel shows a collapsible note tree for the current notebook.
 - Notes can have children and descendants without changing the native note list order.
 - The default panel sort is **Recent groups**, which uses a page's own update time plus direct child updates so recently edited child pages lift their immediate parent group.
-- Panel search delegates to Joplin search, so title and note-body matches in the current notebook can surface matching branches.
+- Panel search delegates to Joplin search. It can search the current notebook or all notebooks, with external notebook matches shown in a separate section.
 - Panel actions:
   - Create root page
   - Create child page
@@ -17,7 +17,7 @@ Sub-Pages adds a notebook-scoped page tree panel to Joplin. Notes can contain ch
   - Move siblings up/down in manual sort mode
   - Repair stale metadata on demand
 - Hierarchy metadata is stored with synced Joplin note user data.
-- The panel row menu mirrors common native note-list actions, including open, tags, to-do conversion, move, duplicate, delete, copy links, and note properties, alongside Sub-Pages hierarchy actions.
+- The panel row menu mirrors common native note-list actions, including open, tags, to-do conversion, move, duplicate, delete, copy links, note properties, and a command palette bridge, alongside Sub-Pages hierarchy actions.
 
 ## Setup in Joplin
 
@@ -36,11 +36,11 @@ Joplin's public plugin API does not let plugins fully replace the native note li
 Because of that, this plugin uses these v1 behaviors:
 
 - The panel is the authoritative hierarchy UI; the native note list remains unchanged.
-- Drag/drop is deferred; use panel buttons and note context menu commands.
+- Drag/drop is deferred; use panel buttons and note context menu commands. Cross-notebook moves use Joplin's native **Move to notebook...** command instead of custom webview drag/drop.
 - Collapse state is local to the panel and does not sync.
 - Mobile clients without the plugin still show ordinary Joplin notes. The hierarchy is invisible but harmless.
 - The plugin does not rewrite `note.order`.
-- The panel row menu is a custom webview menu, not Joplin's native note-list context menu. Other plugins can still add entries to Joplin's native note-list context menu, and Sub-Pages adds its own native context-menu entries there, but third-party plugin commands do not automatically appear inside the Sub-Pages panel menu unless explicit support is added for known commands.
+- The panel row menu is a custom webview menu, not Joplin's native note-list context menu. Other plugins can still add entries to Joplin's native note-list context menu, and Sub-Pages adds its own native context-menu entries there, but third-party plugin commands do not automatically appear inside the Sub-Pages panel menu. Use **Command palette...** from a panel row to select the note and open Joplin's command palette for native and plugin commands.
 
 ## Sync Behavior
 

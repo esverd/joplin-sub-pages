@@ -4,12 +4,13 @@
   const collapsedIds = new Set();
   let currentState = null;
   let searchQuery = '';
+  let searchScope = 'all';
   let statusText = '';
   let busy = false;
   let selectionSyncInFlight = false;
   let stateRevision = 0;
   let stateSyncInFlight = false;
-  let searchState = { query: '', noteIds: [], loading: false, message: '' };
+  let searchState = emptySearchState();
   let searchDebounceTimer = null;
   let searchRequestSerial = 0;
   const searchDebounceMs = 250;
@@ -125,6 +126,7 @@
     } else {
       const search = currentSearch();
       const visibleNodes = filteredRootNodes(search);
+      const externalResults = search.active ? search.externalResults : [];
 
       if (!search.active && shouldShowOnboarding()) root.appendChild(renderOnboarding());
 
@@ -132,10 +134,18 @@
         const tree = element('div', { className: 'sub-pages-tree', role: 'tree' });
         visibleNodes.forEach((node) => renderNode(node, 0, tree, search));
         root.appendChild(tree);
-      } else if (search.active && search.loading) {
-        root.appendChild(element('div', { className: 'sub-pages-empty' }, ['Searching Joplin...']));
-      } else if (search.active) {
-        root.appendChild(element('div', { className: 'sub-pages-empty' }, [`No pages match “${search.query}”.`]));
+      }
+
+      if (externalResults.length) {
+        root.appendChild(renderExternalSearchResults(search));
+      }
+
+      if (search.active && !visibleNodes.length && !externalResults.length) {
+        if (search.loading) {
+          root.appendChild(element('div', { className: 'sub-pages-empty' }, ['Searching Joplin...']));
+        } else {
+          root.appendChild(element('div', { className: 'sub-pages-empty' }, [`No pages match "${search.query}".`]));
+        }
       }
     }
 
@@ -173,14 +183,14 @@
     const search = currentSearch();
     const active = search.active;
     const visibleCount = active ? countVisibleSearchNodes(currentState.nodes, search) : countTreeNodes(currentState.nodes);
-    const totalCount = countTreeNodes(currentState.nodes);
+    const externalCount = active ? search.externalResults.length : 0;
     const wrap = element('div', { className: ['sub-pages-search', active ? 'is-active' : ''].filter(Boolean).join(' ') });
 
     const input = element('input', {
       className: 'sub-pages-search-input',
       type: 'search',
       value: searchQuery,
-      placeholder: 'Search pages...',
+      placeholder: searchScope === 'all' ? 'Search all notebooks...' : 'Search this notebook...',
       ariaLabel: 'Search Sub-Pages with Joplin search',
       autocomplete: 'off',
     });
@@ -189,15 +199,37 @@
 
     if (active) {
       wrap.appendChild(actionButton('clearSearch', null, 'Clear', 'Clear search', false, 'sub-pages-clear-search'));
+    }
+
+    wrap.appendChild(renderSearchScope());
+
+    if (active) {
+      const scopeLabel = search.scope === 'all' ? 'All notebooks' : 'This notebook';
+      const shown = visibleCount + externalCount;
       const status = search.loading
-        ? 'Searching Joplin...'
-        : `Search: showing ${visibleCount} of ${totalCount} page${totalCount === 1 ? '' : 's'}. Matching branches are expanded temporarily.`;
+        ? `Searching Joplin (${scopeLabel})...`
+        : `${scopeLabel}: showing ${shown} row${shown === 1 ? '' : 's'} (${visibleCount} in this notebook${search.scope === 'all' ? `, ${externalCount} elsewhere` : ''}).`;
       wrap.appendChild(element('div', { className: 'sub-pages-filter-status' }, [
         search.message ? `${status} ${search.message}` : status,
       ]));
     }
 
     return wrap;
+  }
+
+  function renderSearchScope() {
+    const group = element('div', { className: 'sub-pages-search-scope', role: 'group', ariaLabel: 'Search scope' });
+    [
+      { value: 'all', label: 'All' },
+      { value: 'notebook', label: 'Notebook' },
+    ].forEach((scope) => {
+      const button = actionButton('setSearchScope', null, scope.label, `Search ${scope.value === 'all' ? 'all notebooks' : 'this notebook'}`, false, 'sub-pages-scope-button');
+      button.dataset.scope = scope.value;
+      button.setAttribute('aria-pressed', searchScope === scope.value ? 'true' : 'false');
+      if (searchScope === scope.value) button.classList.add('is-active');
+      group.appendChild(button);
+    });
+    return group;
   }
 
   function shouldShowOnboarding() {
@@ -295,6 +327,52 @@
     }
   }
 
+  function renderExternalSearchResults(search) {
+    const section = element('div', { className: 'sub-pages-search-results' });
+    section.appendChild(element('div', { className: 'sub-pages-section-heading' }, ['Other notebooks']));
+
+    const list = element('div', { className: 'sub-pages-tree sub-pages-external-results', role: 'list' });
+    search.externalResults.forEach((result) => renderExternalResult(result, list, search));
+    section.appendChild(list);
+    return section;
+  }
+
+  function renderExternalResult(note, container, search) {
+    const row = element('div', {
+      className: [
+        'sub-pages-row',
+        'sub-pages-external-row',
+        note.id === currentState.selectedNoteId ? 'is-selected' : '',
+      ].filter(Boolean).join(' '),
+      role: 'listitem',
+      style: '--depth: 0;',
+    });
+    row.dataset.noteId = note.id;
+
+    const main = element('div', { className: 'sub-pages-row-main' });
+    main.appendChild(element('span', { className: 'sub-pages-spacer' }));
+
+    const title = actionButton('openNote', note.id, '', `Open ${note.title || 'Untitled page'}`);
+    title.classList.add('sub-pages-note-title');
+    appendHighlightedTitle(title, note.title || 'Untitled page', search.normalizedQuery);
+    if (note.isTodo) title.classList.add(note.todoCompleted ? 'is-done' : 'is-todo');
+    main.appendChild(title);
+
+    main.appendChild(element('span', {
+      className: 'sub-pages-notebook-label',
+      title: note.notebookTitle || 'Other notebook',
+    }, [note.notebookTitle || 'Other notebook']));
+
+    const trailing = element('span', { className: 'sub-pages-row-trailing' });
+    const actions = element('span', { className: 'sub-pages-row-actions' });
+    actions.appendChild(renderExternalNoteMenu(note));
+    trailing.appendChild(actions);
+    main.appendChild(trailing);
+
+    row.appendChild(main);
+    container.appendChild(row);
+  }
+
   function normalizedSearchQuery() {
     return searchQuery.trim().toLocaleLowerCase();
   }
@@ -305,21 +383,25 @@
       return {
         active: false,
         query: '',
+        scope: searchScope,
         normalizedQuery: '',
         loading: false,
         message: '',
         matchIds: new Set(),
+        externalResults: [],
       };
     }
 
-    const ready = searchState.query === query;
+    const ready = searchState.query === query && searchState.scope === searchScope;
     return {
       active: true,
       query,
+      scope: searchScope,
       normalizedQuery: normalizedSearchQuery(),
       loading: !ready || !!searchState.loading,
       message: ready ? (searchState.message || '') : '',
       matchIds: new Set(ready ? (searchState.noteIds || []) : []),
+      externalResults: ready ? (searchState.externalResults || []) : [],
     };
   }
 
@@ -407,6 +489,7 @@
     menu.appendChild(menuButton('openNote', node, 'Open'));
     menu.appendChild(menuButton('openNoteInNewWindow', node, 'Open in new window'));
     menu.appendChild(menuButton('startExternalEditing', node, 'Edit in external editor'));
+    menu.appendChild(menuButton('commandPalette', node, 'Command palette...'));
     menu.appendChild(element('div', { className: 'sub-pages-menu-separator' }));
     menu.appendChild(menuButton('setTags', node, 'Tags...'));
     menu.appendChild(menuButton('toggleNoteType', node, node.isTodo ? 'Switch to note' : 'Switch to to-do'));
@@ -425,6 +508,39 @@
     menu.appendChild(menuButton('moveDown', node, 'Move down', !node.canMoveDown));
     menu.appendChild(element('div', { className: 'sub-pages-menu-separator' }));
     menu.appendChild(menuButton('unlink', node, 'Unlink', depth <= 0 && !hasChildren));
+
+    details.appendChild(menu);
+    return details;
+  }
+
+  function renderExternalNoteMenu(note) {
+    const details = element('details', { className: 'sub-pages-row-menu' });
+    const menuLabel = `More actions for ${note.title || 'Untitled page'}`;
+    const summary = element('summary', {
+      className: 'sub-pages-button sub-pages-icon-button sub-pages-menu-trigger',
+      title: menuLabel,
+      role: 'button',
+      ariaLabel: menuLabel,
+    }, [iconElement('more')]);
+    summary.setAttribute('aria-haspopup', 'menu');
+    summary.setAttribute('aria-expanded', 'false');
+    details.appendChild(summary);
+
+    const menu = element('div', { className: 'sub-pages-menu', role: 'menu' });
+    menu.appendChild(menuButton('openNote', note, 'Open'));
+    menu.appendChild(menuButton('openNoteInNewWindow', note, 'Open in new window'));
+    menu.appendChild(menuButton('startExternalEditing', note, 'Edit in external editor'));
+    menu.appendChild(menuButton('commandPalette', note, 'Command palette...'));
+    menu.appendChild(element('div', { className: 'sub-pages-menu-separator' }));
+    menu.appendChild(menuButton('setTags', note, 'Tags...'));
+    menu.appendChild(menuButton('toggleNoteType', note, note.isTodo ? 'Switch to note' : 'Switch to to-do'));
+    menu.appendChild(menuButton('moveToFolder', note, 'Move to notebook...'));
+    menu.appendChild(menuButton('duplicateNote', note, 'Duplicate'));
+    menu.appendChild(menuButton('deleteNote', note, 'Delete'));
+    menu.appendChild(element('div', { className: 'sub-pages-menu-separator' }));
+    menu.appendChild(menuButton('copyMarkdownLink', note, 'Copy Markdown link'));
+    menu.appendChild(menuButton('copyExternalLink', note, 'Copy external link'));
+    menu.appendChild(menuButton('showNoteProperties', note, 'Note properties'));
 
     details.appendChild(menu);
     return details;
@@ -526,6 +642,19 @@
 
     const action = button.dataset.action;
     const noteId = button.dataset.noteId || null;
+
+    if (action === 'setSearchScope') {
+      const nextScope = button.dataset.scope === 'notebook' ? 'notebook' : 'all';
+      if (nextScope !== searchScope) {
+        searchScope = nextScope;
+        if (searchQuery.trim()) scheduleSearch(0);
+        else resetSearchState();
+        closeOpenMenus();
+        render();
+        focusSearchInput();
+      }
+      return;
+    }
 
     if (action === 'clearSearch') {
       searchQuery = '';
@@ -654,41 +783,47 @@
       searchDebounceTimer = null;
     }
     searchRequestSerial += 1;
-    searchState = { query: '', noteIds: [], loading: false, message: '' };
+    searchState = emptySearchState();
   }
 
   function scheduleSearch(delay) {
     if (searchDebounceTimer) window.clearTimeout(searchDebounceTimer);
 
     const query = searchQuery.trim();
+    const scope = searchScope;
     searchRequestSerial += 1;
     const requestId = searchRequestSerial;
 
     if (!query) {
       searchDebounceTimer = null;
-      searchState = { query: '', noteIds: [], loading: false, message: '' };
+      searchState = emptySearchState();
       return;
     }
 
+    const keepPrevious = searchState.query === query && searchState.scope === scope;
     searchState = {
       query,
-      noteIds: searchState.query === query ? (searchState.noteIds || []) : [],
+      scope,
+      noteIds: keepPrevious ? (searchState.noteIds || []) : [],
+      externalResults: keepPrevious ? (searchState.externalResults || []) : [],
       loading: true,
       message: '',
     };
 
     searchDebounceTimer = window.setTimeout(() => {
       searchDebounceTimer = null;
-      runSearch(query, requestId);
+      runSearch(query, scope, requestId);
     }, typeof delay === 'number' ? delay : searchDebounceMs);
   }
 
-  function runSearch(query, requestId) {
+  function runSearch(query, scope, requestId) {
     if (!api || typeof api.postMessage !== 'function') {
       if (requestId !== searchRequestSerial) return;
       searchState = {
         query,
+        scope,
         noteIds: [],
+        externalResults: [],
         loading: false,
         message: 'Joplin search is unavailable.',
       };
@@ -696,15 +831,20 @@
       return;
     }
 
-    Promise.resolve(api.postMessage({ name: 'search', query }))
+    Promise.resolve(api.postMessage({ name: 'search', query, scope }))
       .then((response) => {
-        if (requestId !== searchRequestSerial || query !== searchQuery.trim()) return;
+        if (requestId !== searchRequestSerial || query !== searchQuery.trim() || scope !== searchScope) return;
         const noteIds = response && Array.isArray(response.noteIds)
           ? response.noteIds.filter((id) => typeof id === 'string')
           : [];
+        const externalResults = response && Array.isArray(response.externalResults)
+          ? response.externalResults.map(normalizeExternalResult).filter(Boolean)
+          : [];
         searchState = {
           query: response && typeof response.query === 'string' ? response.query : query,
+          scope,
           noteIds,
+          externalResults,
           loading: false,
           message: response && response.ok === false && response.message ? response.message : '',
         };
@@ -712,16 +852,35 @@
         focusSearchInput();
       })
       .catch((error) => {
-        if (requestId !== searchRequestSerial || query !== searchQuery.trim()) return;
+        if (requestId !== searchRequestSerial || query !== searchQuery.trim() || scope !== searchScope) return;
         searchState = {
           query,
+          scope,
           noteIds: [],
+          externalResults: [],
           loading: false,
           message: error && error.message ? error.message : String(error),
         };
         render();
         focusSearchInput();
       });
+  }
+
+  function emptySearchState() {
+    return { query: '', scope: searchScope, noteIds: [], externalResults: [], loading: false, message: '' };
+  }
+
+  function normalizeExternalResult(value) {
+    if (!value || typeof value.id !== 'string') return null;
+    return {
+      id: value.id,
+      title: typeof value.title === 'string' && value.title.trim() ? value.title : 'Untitled page',
+      parentId: typeof value.parentId === 'string' ? value.parentId : '',
+      notebookTitle: typeof value.notebookTitle === 'string' && value.notebookTitle.trim() ? value.notebookTitle : 'Other notebook',
+      isTodo: !!value.isTodo,
+      todoCompleted: !!value.todoCompleted,
+      updatedTime: typeof value.updatedTime === 'number' ? value.updatedTime : 0,
+    };
   }
 
   function openMenu(menu, options) {
@@ -825,6 +984,7 @@
       currentState = message.state;
       statusText = '';
       render();
+      if (searchQuery.trim()) scheduleSearch(0);
     });
   }
 

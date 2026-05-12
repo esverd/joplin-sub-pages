@@ -42,6 +42,7 @@ const RECENT_CHANGE_TIME_TTL = 10 * 60 * 1000;
 const SETTLED_REFRESH_DELAYS = [1500, 4000];
 
 type PanelSortMode = 'recentGroups' | 'manual' | 'title';
+type SearchScope = 'all' | 'notebook';
 
 interface FolderSummary {
   id: string;
@@ -57,6 +58,16 @@ interface NoteSummary {
   is_todo: number;
   todo_completed: number;
   user_data: unknown;
+}
+
+interface SearchExternalResult {
+  id: string;
+  title: string;
+  parentId: string;
+  notebookTitle: string;
+  isTodo: boolean;
+  todoCompleted: boolean;
+  updatedTime: number;
 }
 
 interface HierarchyMeta {
@@ -367,7 +378,8 @@ async function handlePanelMessage(message: any): Promise<any> {
     }
 
     if (name === 'search') {
-      return await panelSearchResponse(typeof message?.query === 'string' ? message.query : '');
+      const scope: SearchScope = message?.scope === 'notebook' ? 'notebook' : 'all';
+      return await panelSearchResponse(typeof message?.query === 'string' ? message.query : '', scope);
     }
 
     if (name === 'createRoot') {
@@ -380,6 +392,18 @@ async function handlePanelMessage(message: any): Promise<any> {
       await openNote(noteId);
       scheduleSelectionRefresh();
       return { ok: true };
+    }
+
+    if (name === 'commandPalette' && noteId) {
+      await openNote(noteId);
+      rememberSelectedNoteId(noteId);
+      scheduleSelectionRefresh(0, noteId);
+      await delay(75);
+      const opened = await runCommandPalette();
+      return {
+        ok: opened,
+        message: opened ? undefined : 'Joplin command palette is unavailable in this version.',
+      };
     }
 
     if (NOTE_LIST_PARITY_COMMANDS.has(name) && noteId) {
@@ -472,63 +496,87 @@ async function panelStateResponse(message?: string): Promise<any> {
   return response;
 }
 
-async function panelSearchResponse(query: string): Promise<any> {
+async function panelSearchResponse(query: string, scope: SearchScope): Promise<any> {
   const trimmedQuery = query.trim();
   if (!trimmedQuery) {
     return {
       ok: true,
       query: '',
+      scope,
       noteIds: [],
+      externalResults: [],
     };
   }
 
   const folder = await selectedFolderSummary();
-  if (!folder) {
+  if (!folder && scope === 'notebook') {
     return {
       ok: false,
       query: trimmedQuery,
+      scope,
       noteIds: [],
+      externalResults: [],
       message: 'No notebook is selected.',
     };
   }
 
   try {
-    const notes = await listNotebookNotes(folder.id);
+    const notes = folder ? await listNotebookNotes(folder.id) : [];
     const notebookNoteIds = new Set(notes.map(note => note.id));
-    const noteIds = await searchNoteIds(trimmedQuery, notebookNoteIds);
+    const searchResults = await searchNotes(trimmedQuery);
+    const noteIds: string[] = [];
+    const externalResults: SearchExternalResult[] = [];
+    const folderTitleCache = new Map<string, string>();
+    const seenNoteIds = new Set<string>();
+
+    for (const note of searchResults) {
+      if (seenNoteIds.has(note.id)) continue;
+      seenNoteIds.add(note.id);
+
+      if (notebookNoteIds.has(note.id)) {
+        noteIds.push(note.id);
+      } else if (scope === 'all') {
+        externalResults.push(await toExternalSearchResult(note, folderTitleCache));
+      }
+    }
+
     return {
       ok: true,
       query: trimmedQuery,
+      scope,
       noteIds,
+      externalResults,
     };
   } catch (error) {
     console.warn('Sub-Pages: Joplin search failed', error);
     return {
       ok: false,
       query: trimmedQuery,
+      scope,
       noteIds: [],
+      externalResults: [],
       message: 'Search failed. Try Refresh Sub-Pages panel or restart Joplin.',
     };
   }
 }
 
-async function searchNoteIds(query: string, allowedNoteIds: Set<string>): Promise<string[]> {
-  const output: string[] = [];
+async function searchNotes(query: string): Promise<NoteSummary[]> {
+  const output: NoteSummary[] = [];
   let page = 1;
 
   while (true) {
     const response = await joplin.data.get(['search'], {
       query,
       type: 'note',
-      fields: ['id'],
+      fields: searchNoteFields(),
       page,
       limit: 100,
     }) as PageResponse<any>;
 
     const items = Array.isArray(response.items) ? response.items : [];
     for (const item of items) {
-      if (!item || typeof item.id !== 'string') continue;
-      if (allowedNoteIds.has(item.id)) output.push(item.id);
+      const note = normalizeNote(item);
+      if (note) output.push(note);
     }
 
     if (!response.has_more) break;
@@ -536,6 +584,39 @@ async function searchNoteIds(query: string, allowedNoteIds: Set<string>): Promis
   }
 
   return output;
+}
+
+function searchNoteFields(): string[] {
+  return ['id', 'title', 'parent_id', 'user_updated_time', 'updated_time', 'is_todo', 'todo_completed'];
+}
+
+async function toExternalSearchResult(note: NoteSummary, folderTitleCache: Map<string, string>): Promise<SearchExternalResult> {
+  return {
+    id: note.id,
+    title: displayTitle(note),
+    parentId: note.parent_id,
+    notebookTitle: await searchResultNotebookTitle(note.parent_id, folderTitleCache),
+    isTodo: !!note.is_todo,
+    todoCompleted: !!note.todo_completed,
+    updatedTime: noteTime(note),
+  };
+}
+
+async function searchResultNotebookTitle(folderId: string, cache: Map<string, string>): Promise<string> {
+  if (!folderId) return 'No notebook';
+  if (cache.has(folderId)) return cache.get(folderId) ?? 'Unknown notebook';
+
+  try {
+    const folder = await joplin.data.get(['folders', folderId], {
+      fields: ['id', 'title'],
+    });
+    const title = typeof folder?.title === 'string' && folder.title.trim() ? folder.title.trim() : 'Unknown notebook';
+    cache.set(folderId, title);
+    return title;
+  } catch {
+    cache.set(folderId, 'Unknown notebook');
+    return 'Unknown notebook';
+  }
 }
 
 function schedulePanelRefresh(delay = 150): void {
@@ -1629,6 +1710,17 @@ async function runNoteListParityCommand(commandName: string, noteId: string): Pr
   }
 }
 
+async function runCommandPalette(): Promise<boolean> {
+  try {
+    await joplin.commands.execute('commandPalette');
+    return true;
+  } catch (error) {
+    console.warn('Sub-Pages: command palette command failed', error);
+    await showToast('Joplin command palette is unavailable in this version.', ToastType.Error);
+    return false;
+  }
+}
+
 async function copyMarkdownLink(noteId: string): Promise<void> {
   const note = await getNote(noteId);
   const title = escapeMarkdownLinkTitle(note?.title || 'Untitled');
@@ -1710,6 +1802,10 @@ function sameIds(a: string[], b: string[]): boolean {
     if (a[index] !== b[index]) return false;
   }
   return true;
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function noteTime(note: NoteSummary): number {
