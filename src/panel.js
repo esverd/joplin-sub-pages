@@ -53,6 +53,7 @@
       if (typeof response.revision === 'number') stateRevision = response.revision;
       currentState = response.state;
       statusText = response.message || '';
+      syncPanelSelectionToSelectedNote();
       prunePanelSelection();
       render();
       if (searchQuery.trim()) scheduleSearch(0);
@@ -84,10 +85,7 @@
         if (currentState.selectedNoteId === nextSelectedNoteId) return;
 
         currentState.selectedNoteId = nextSelectedNoteId;
-        if (!panelSelectedIds.size && nextSelectedNoteId) {
-          panelSelectedIds.add(nextSelectedNoteId);
-          lastPanelSelectedId = nextSelectedNoteId;
-        }
+        syncPanelSelectionToSelectedNote();
         render();
       })
       .catch(() => {
@@ -116,6 +114,9 @@
   }
 
   function render() {
+    closeOpenMenus();
+    cleanupDetachedMenus();
+
     if (!currentState) {
       const loading = element('div', { className: 'sub-pages-shell' });
       loading.appendChild(element('div', { className: 'sub-pages-loading' }, ['Loading Sub-Pages...']));
@@ -134,8 +135,6 @@
       const search = currentSearch();
       const visibleNodes = filteredRootNodes(search);
       const externalResults = search.active ? search.externalResults : [];
-
-      if (!search.active && shouldShowOnboarding()) root.appendChild(renderOnboarding());
 
       if (currentState.nodes.length && visibleNodes.length) {
         const tree = element('div', { className: 'sub-pages-tree', role: 'tree' });
@@ -178,9 +177,6 @@
     header.appendChild(actions);
 
     titleWrap.appendChild(element('div', { className: 'sub-pages-heading' }, [folderTitle]));
-    titleWrap.appendChild(element('div', { className: 'sub-pages-subtitle' }, [
-      `${currentState.noteCount || 0} notes | ${currentState.metadataItemCount || 0} Sub-Pages metadata items | ${sortLabel(currentState.sortMode)}`,
-    ]));
     header.appendChild(titleWrap);
 
     return header;
@@ -239,35 +235,6 @@
     return group;
   }
 
-  function shouldShowOnboarding() {
-    return Number(currentState.noteCount || 0) === 0 || Number(currentState.metadataItemCount || 0) === 0;
-  }
-
-  function renderOnboarding() {
-    const noteCount = Number(currentState.noteCount || 0);
-    const selectedNode = findNodeById(currentState.nodes, currentState.selectedNoteId);
-    const empty = noteCount === 0;
-    const wrap = element('div', { className: 'sub-pages-onboarding' });
-
-    wrap.appendChild(element('div', { className: 'sub-pages-onboarding-title' }, [
-      empty ? 'Start a Sub-Pages notebook' : 'No linked sub-pages yet',
-    ]));
-    wrap.appendChild(element('div', { className: 'sub-pages-onboarding-copy' }, [
-      empty
-        ? 'Create the first page here, then add child pages from its row menu.'
-        : 'Your notebook is still a flat list. Create a child under the selected page, or use a row menu to begin a hierarchy.',
-    ]));
-
-    const actions = element('div', { className: 'sub-pages-onboarding-actions' });
-    if (selectedNode) {
-      actions.appendChild(actionButton('createChild', selectedNode.id, 'Create child under selected', 'Create child under selected page'));
-    }
-    actions.appendChild(actionButton('createRoot', null, empty ? 'Create first page' : 'Create root page', empty ? 'Create first page' : 'Create root page'));
-    wrap.appendChild(actions);
-
-    return wrap;
-  }
-
   function renderNode(node, depth, container, search) {
     const visibleChildren = search.active
       ? (node.children || []).filter((child) => nodeMatchesSearch(child, search))
@@ -298,7 +265,7 @@
 
     if (hasChildren) {
       main.appendChild(iconButton('toggle', node.id, isCollapsed ? 'chevronRight' : 'chevronDown', filtering ? 'Collapse state is preserved while filtering' : (isCollapsed ? 'Expand' : 'Collapse'), false, 'sub-pages-icon-button sub-pages-toggle'));
-    } else {
+    } else if (depth > 0) {
       main.appendChild(element('span', { className: 'sub-pages-spacer' }));
     }
 
@@ -494,6 +461,19 @@
     if (lastPanelSelectedId && !validIds.has(lastPanelSelectedId)) lastPanelSelectedId = null;
   }
 
+  function syncPanelSelectionToSelectedNote() {
+    if (!currentState) return;
+
+    const noteId = currentState.selectedNoteId || null;
+    panelSelectedIds.clear();
+    if (noteId) {
+      panelSelectedIds.add(noteId);
+      lastPanelSelectedId = noteId;
+    } else {
+      lastPanelSelectedId = null;
+    }
+  }
+
   function updatePanelSelection(noteId, event) {
     if (!noteId) return;
     const additive = !!(event && (event.ctrlKey || event.metaKey));
@@ -575,8 +555,7 @@
     menu.appendChild(element('div', { className: 'sub-pages-menu-separator' }));
     menu.appendChild(menuButton('setTags', node, 'Tags...'));
     menu.appendChild(menuButton('toggleNoteType', node, node.isTodo ? 'Switch to note' : 'Switch to to-do'));
-    menu.appendChild(menuButton('moveToFolder', node, selectionCount > 1 ? `Move ${selectionCount} notes to notebook...` : 'Move note to notebook...'));
-    menu.appendChild(menuButton('moveBranchToFolder', node, selectionCount > 1 ? 'Move selected branches to notebook...' : 'Move branch to notebook...'));
+    menu.appendChild(menuButton('moveBranchToFolder', node, selectionCount > 1 ? `Move ${selectionCount} pages to notebook...` : 'Move to notebook...'));
     menu.appendChild(menuButton('duplicateNote', node, 'Duplicate'));
     menu.appendChild(menuButton('deleteNote', node, 'Delete'));
     menu.appendChild(element('div', { className: 'sub-pages-menu-separator' }));
@@ -618,8 +597,7 @@
     menu.appendChild(element('div', { className: 'sub-pages-menu-separator' }));
     menu.appendChild(menuButton('setTags', note, 'Tags...'));
     menu.appendChild(menuButton('toggleNoteType', note, note.isTodo ? 'Switch to note' : 'Switch to to-do'));
-    menu.appendChild(menuButton('moveToFolder', note, selectionCount > 1 ? `Move ${selectionCount} notes to notebook...` : 'Move note to notebook...'));
-    menu.appendChild(menuButton('moveBranchToFolder', note, selectionCount > 1 ? 'Move selected branches to notebook...' : 'Move branch to notebook...'));
+    menu.appendChild(menuButton('moveBranchToFolder', note, selectionCount > 1 ? `Move ${selectionCount} pages to notebook...` : 'Move to notebook...'));
     menu.appendChild(menuButton('duplicateNote', note, 'Duplicate'));
     menu.appendChild(menuButton('deleteNote', note, 'Delete'));
     menu.appendChild(element('div', { className: 'sub-pages-menu-separator' }));
@@ -702,12 +680,6 @@
     return node;
   }
 
-  function sortLabel(value) {
-    if (value === 'manual') return 'Manual';
-    if (value === 'title') return 'Title';
-    return 'Recent groups';
-  }
-
   app.addEventListener('click', (event) => {
     const button = event.target.closest('button[data-action]');
     if (!button) {
@@ -725,6 +697,22 @@
 
     if (!button || button.disabled) return;
 
+    handleActionButton(button, event);
+  });
+
+  document.addEventListener('click', (event) => {
+    const button = event.target.closest('button[data-action]');
+    if (!button) {
+      if (!isPanelInteractionTarget(event.target)) closeOpenMenus();
+      return;
+    }
+    if (button.disabled || app.contains(button) || !button.closest('.sub-pages-menu')) return;
+
+    event.preventDefault();
+    handleActionButton(button, event);
+  });
+
+  function handleActionButton(button, event) {
     const action = button.dataset.action;
     const noteId = button.dataset.noteId || null;
 
@@ -783,7 +771,7 @@
 
     closeOpenMenus();
     post(action, noteId ? { noteId, noteIds: selectedActionNoteIds(noteId) } : {});
-  });
+  }
 
   app.addEventListener('dblclick', (event) => {
     const row = event.target.closest('.sub-pages-row[data-note-id]');
@@ -821,6 +809,16 @@
     openMenu(details, { focusFirst: true });
   });
 
+  app.addEventListener('focusout', () => {
+    window.setTimeout(() => {
+      if (!isPanelInteractionTarget(document.activeElement)) closeOpenMenus();
+    }, 0);
+  });
+
+  window.addEventListener('blur', () => {
+    closeOpenMenus();
+  });
+
   window.addEventListener('keydown', (event) => {
     if (event.key !== 'Escape') return;
 
@@ -854,16 +852,25 @@
     }
 
     const menu = event.target.closest('.sub-pages-menu');
-    if (!menu) return;
+    if (menu) handleMenuKeydown(event, menu);
+  });
 
-    const rowMenu = menu.closest('.sub-pages-row-menu');
+  document.addEventListener('keydown', (event) => {
+    if (app.contains(event.target)) return;
+
+    const menu = event.target.closest('.sub-pages-menu');
+    if (menu) handleMenuKeydown(event, menu);
+  });
+
+  function handleMenuKeydown(event, menuPanel) {
+    const rowMenu = menuPanel.__subPagesHome || menuPanel.closest('.sub-pages-row-menu');
     if (event.key === 'Escape') {
       event.preventDefault();
       if (rowMenu) closeMenu(rowMenu, true);
       return;
     }
 
-    const items = [...menu.querySelectorAll('.sub-pages-menu-item:not(:disabled)')];
+    const items = [...menuPanel.querySelectorAll('.sub-pages-menu-item:not(:disabled)')];
     const currentIndex = items.indexOf(document.activeElement);
     let nextIndex = -1;
 
@@ -877,7 +884,7 @@
       event.preventDefault();
       items[nextIndex].focus();
     }
-  });
+  }
 
   function focusSearchInput(cursorPosition) {
     const input = app.querySelector('input[data-action="search"]');
@@ -959,8 +966,7 @@
           loading: false,
           message: response && response.ok === false && response.message ? response.message : '',
         };
-        render();
-        focusSearchInput();
+        renderPreservingSearchFocus();
       })
       .catch((error) => {
         if (requestId !== searchRequestSerial || query !== searchQuery.trim() || scope !== searchScope) return;
@@ -972,9 +978,17 @@
           loading: false,
           message: error && error.message ? error.message : String(error),
         };
-        render();
-        focusSearchInput();
+        renderPreservingSearchFocus();
       });
+  }
+
+  function renderPreservingSearchFocus() {
+    const activeElement = document.activeElement;
+    const keepFocus = !!(activeElement && activeElement.closest && activeElement.closest('input[data-action="search"]'));
+    const cursorPosition = keepFocus ? activeElement.selectionStart : null;
+
+    render();
+    if (keepFocus) focusSearchInput(cursorPosition);
   }
 
   function emptySearchState() {
@@ -997,11 +1011,13 @@
   function openMenu(menu, options) {
     closeOpenMenus(menu);
     menu.open = true;
+    portalMenuPanel(menu);
     syncOpenMenuClass(menu);
 
     if (options && (options.focusFirst || options.focusLast)) {
       window.requestAnimationFrame(() => {
-        const items = [...menu.querySelectorAll('.sub-pages-menu-item:not(:disabled)')];
+        const menuPanel = menuPanelFor(menu);
+        const items = menuPanel ? [...menuPanel.querySelectorAll('.sub-pages-menu-item:not(:disabled)')] : [];
         const item = options.focusLast ? items[items.length - 1] : items[0];
         if (item) item.focus();
       });
@@ -1011,6 +1027,7 @@
   function closeMenu(menu, returnFocus) {
     menu.open = false;
     syncOpenMenuClass(menu);
+    restoreMenuPanel(menu);
 
     if (returnFocus) {
       const trigger = menu.querySelector('.sub-pages-menu-trigger');
@@ -1024,6 +1041,13 @@
     });
   }
 
+  function cleanupDetachedMenus() {
+    document.body.querySelectorAll('.sub-pages-menu').forEach((menuPanel) => {
+      const home = menuPanel.__subPagesHome;
+      if (!home || !app.contains(home)) menuPanel.remove();
+    });
+  }
+
   function syncOpenMenuClass(menu) {
     const row = menu.closest('.sub-pages-row');
     if (row) row.classList.toggle('has-open-menu', !!menu.open);
@@ -1031,7 +1055,7 @@
     if (trigger) trigger.setAttribute('aria-expanded', menu.open ? 'true' : 'false');
     menu.classList.remove('opens-up');
 
-    const menuPanel = menu.querySelector('.sub-pages-menu');
+    const menuPanel = menuPanelFor(menu);
     if (menuPanel) resetMenuPanelPosition(menuPanel);
 
     if (!menu.open) return;
@@ -1039,7 +1063,7 @@
     window.requestAnimationFrame(() => {
       if (!menu.open) return;
 
-      const menuPanel = menu.querySelector('.sub-pages-menu');
+      const menuPanel = menuPanelFor(menu);
       if (!menuPanel) return;
 
       const margin = 8;
@@ -1047,9 +1071,9 @@
       const viewportWidth = Math.max(80, window.innerWidth);
       const viewportHeight = Math.max(80, window.innerHeight);
       const panelRect = menuPanel.getBoundingClientRect();
-      const menuWidth = Math.min(panelRect.width || 188, viewportWidth - margin * 2);
+      const menuWidth = Math.min(panelRect.width || 240, viewportWidth - margin * 2);
       const naturalHeight = menuPanel.scrollHeight || panelRect.height || 260;
-      const targetHeight = Math.min(naturalHeight, 260);
+      const targetHeight = Math.min(naturalHeight, 420);
       const availableBelow = window.innerHeight - triggerRect.bottom - margin;
       const availableAbove = triggerRect.top - margin;
       const openUp = availableBelow < targetHeight && availableAbove > availableBelow;
@@ -1070,6 +1094,31 @@
     });
   }
 
+  function portalMenuPanel(menu) {
+    const menuPanel = menuPanelFor(menu);
+    if (!menuPanel || menuPanel.parentElement === document.body) return;
+
+    menuPanel.__subPagesHome = menu;
+    document.body.appendChild(menuPanel);
+  }
+
+  function restoreMenuPanel(menu) {
+    const menuPanel = menuPanelFor(menu);
+    if (!menuPanel || menuPanel.__subPagesHome !== menu) return;
+
+    resetMenuPanelPosition(menuPanel);
+    menu.appendChild(menuPanel);
+    delete menuPanel.__subPagesHome;
+  }
+
+  function menuPanelFor(menu) {
+    const localPanel = menu.querySelector('.sub-pages-menu');
+    if (localPanel) return localPanel;
+
+    return [...document.body.querySelectorAll('.sub-pages-menu')]
+      .find((panel) => panel.__subPagesHome === menu) || null;
+  }
+
   function resetMenuPanelPosition(menuPanel) {
     menuPanel.style.removeProperty('--sub-pages-menu-max-height');
     menuPanel.style.removeProperty('position');
@@ -1079,6 +1128,10 @@
     menuPanel.style.removeProperty('top');
   }
 
+  function isPanelInteractionTarget(target) {
+    return !!(target && target.closest && (app.contains(target) || target.closest('.sub-pages-menu')));
+  }
+
   if (api && typeof api.onMessage === 'function') {
     api.onMessage((message) => {
       if (!message) return;
@@ -1086,6 +1139,7 @@
       if (message.name === 'selection') {
         if (!currentState) return;
         currentState.selectedNoteId = message.selectedNoteId || null;
+        syncPanelSelectionToSelectedNote();
         render();
         return;
       }
@@ -1094,6 +1148,7 @@
       if (typeof message.revision === 'number') stateRevision = message.revision;
       currentState = message.state;
       statusText = '';
+      syncPanelSelectionToSelectedNote();
       prunePanelSelection();
       render();
       if (searchQuery.trim()) scheduleSearch(0);
@@ -1109,7 +1164,7 @@
   }, 5000);
 
   window.setInterval(syncSelectedNote, 1000);
-  window.setInterval(syncPanelState, 1500);
+  window.setInterval(syncPanelState, 500);
 
   post('ready');
 }());

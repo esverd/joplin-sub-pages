@@ -40,6 +40,7 @@ const CHILD_IDS_KEY = 'subPages.childIds';
 
 const DEFAULT_ROOT_TITLE = 'Untitled page';
 const DEFAULT_CHILD_TITLE = 'Untitled sub-page';
+const NOTE_LIST_PAGE_LIMIT = 100;
 const RECENT_CHANGE_TIME_TTL = 10 * 60 * 1000;
 const SETTLED_REFRESH_DELAYS = [1500, 4000];
 
@@ -213,7 +214,8 @@ async function registerCommands(): Promise<void> {
           await notify('Select a note before creating a child page.');
           return;
         }
-        await createChildPage(note.id);
+        const createdId = await createChildPage(note.id);
+        if (createdId) rememberSelectedNoteId(createdId);
         markPanelStateChanged();
         await refreshPanel(true);
       });
@@ -240,7 +242,7 @@ async function registerCommands(): Promise<void> {
 
   await joplin.commands.register({
     name: COMMAND_MOVE_BRANCH_TO_FOLDER,
-    label: 'Move Sub-Pages branch to notebook...',
+    label: 'Move page to notebook...',
     iconName: 'fas fa-folder-open',
     execute: async (...args: any[]) => {
       await runCommand(async () => {
@@ -395,7 +397,9 @@ async function handlePanelMessage(message: any): Promise<any> {
 
     if (name === 'stateIfChanged') {
       const revision = typeof message?.revision === 'number' ? message.revision : -1;
-      if (revision === panelStateRevision) {
+      const folder = await selectedFolderSummary();
+      const selectedFolderId = folder?.id ?? null;
+      if (revision === panelStateRevision && selectedFolderId === lastPanelFolderId) {
         return {
           ok: true,
           revision: panelStateRevision,
@@ -418,9 +422,10 @@ async function handlePanelMessage(message: any): Promise<any> {
     }
 
     if (name === 'createRoot') {
-      await createRootPage();
+      const createdId = await createRootPage();
+      if (createdId) rememberSelectedNoteId(createdId);
       markPanelStateChanged();
-      return panelStateResponse();
+      return panelStateResponse(undefined, createdId || undefined);
     }
 
     if (name === 'openNote' && noteId) {
@@ -470,9 +475,10 @@ async function handlePanelMessage(message: any): Promise<any> {
     }
 
     if (name === 'createChild' && noteId) {
-      await createChildPage(noteId);
+      const createdId = await createChildPage(noteId);
+      if (createdId) rememberSelectedNoteId(createdId);
       markPanelStateChanged();
-      return panelStateResponse();
+      return panelStateResponse(undefined, createdId || undefined);
     }
 
     if (name === 'move' && noteId) {
@@ -527,11 +533,11 @@ async function handlePanelMessage(message: any): Promise<any> {
   }
 }
 
-async function panelStateResponse(message?: string): Promise<any> {
+async function panelStateResponse(message?: string, selectedNoteIdOverride?: string): Promise<any> {
   const response: any = {
     ok: true,
     revision: panelStateRevision,
-    state: await buildPanelState(),
+    state: await buildPanelState(selectedNoteIdOverride),
   };
   if (message) response.message = message;
   return response;
@@ -765,14 +771,15 @@ async function panelVisible(): Promise<boolean> {
   }
 }
 
-async function buildPanelState(): Promise<any> {
+async function buildPanelState(selectedNoteIdOverride?: string): Promise<any> {
   try {
     const folder = await selectedFolderSummary();
     lastPanelFolderId = folder?.id ?? null;
+    const currentSelectedNoteId = selectedNoteIdOverride !== undefined ? selectedNoteIdOverride : await selectedNoteId();
     if (!folder) {
       return {
         folder: null,
-        selectedNoteId: await selectedNoteId(),
+        selectedNoteId: currentSelectedNoteId,
         sortMode: await panelSortMode(),
         nodes: [],
         noteCount: 0,
@@ -788,7 +795,7 @@ async function buildPanelState(): Promise<any> {
 
     return {
       folder,
-      selectedNoteId: await selectedNoteId(),
+      selectedNoteId: currentSelectedNoteId,
       sortMode,
       nodes: tree.roots,
       noteCount: notes.length,
@@ -800,7 +807,7 @@ async function buildPanelState(): Promise<any> {
     const message = error instanceof Error ? error.message : String(error);
     return {
       folder: null,
-      selectedNoteId: await selectedNoteId(),
+      selectedNoteId: selectedNoteIdOverride !== undefined ? selectedNoteIdOverride : await selectedNoteId(),
       sortMode: await panelSortMode(),
       nodes: [],
       noteCount: 0,
@@ -950,11 +957,11 @@ function applyMoveFlags(nodes: TreeNode[], sortMode: PanelSortMode): void {
   }
 }
 
-async function createRootPage(): Promise<void> {
+async function createRootPage(): Promise<string | null> {
   const folder = await selectedFolderSummary();
   if (!folder) {
     await notify('Select a notebook before creating a root page.');
-    return;
+    return null;
   }
 
   const title = await uniquePageTitle(folder.id, DEFAULT_ROOT_TITLE);
@@ -965,16 +972,20 @@ async function createRootPage(): Promise<void> {
   });
 
   if (created?.id) {
-    await openNote(String(created.id));
+    const noteId = String(created.id);
+    await openNote(noteId);
     await showToast(`Created "${title}".`);
+    return noteId;
   }
+
+  return null;
 }
 
-async function createChildPage(parentId: string): Promise<void> {
+async function createChildPage(parentId: string): Promise<string | null> {
   const parent = await getNote(parentId);
   if (!parent) {
     await notify('The parent page could not be loaded.');
-    return;
+    return null;
   }
 
   const title = await uniquePageTitle(parent.parent_id, DEFAULT_CHILD_TITLE);
@@ -987,14 +998,15 @@ async function createChildPage(parentId: string): Promise<void> {
   const child = created?.id ? await getNote(String(created.id)) : null;
   if (!child) {
     await notify('The child page was created, but could not be loaded.');
-    return;
+    return null;
   }
 
   const attached = await attachPageToParent(child, parent);
-  if (!attached) return;
+  if (!attached) return null;
 
   await openNote(child.id);
   await showToast(`Created child page under "${displayTitle(parent)}".`);
+  return child.id;
 }
 
 async function attachPageToParent(child: NoteSummary, parent: NoteSummary): Promise<boolean> {
@@ -1136,7 +1148,7 @@ async function moveBranchesToFolder(noteIds: string[]): Promise<void> {
   }).join('');
   const selectedLabel = branchInfo.branchRootTitles.length === 1
     ? `"${branchInfo.branchRootTitles[0]}"`
-    : `${branchInfo.branchRootTitles.length} selected branches`;
+    : `${branchInfo.branchRootTitles.length} selected pages`;
 
   const handle = await joplin.views.dialogs.create(DIALOG_MOVE_BRANCH_TO_FOLDER);
   await joplin.views.dialogs.setHtml(handle, `
@@ -1640,7 +1652,7 @@ async function listNotebookNotes(notebookId: string): Promise<NoteSummary[]> {
       order_by: 'user_updated_time',
       order_dir: 'DESC',
       page,
-      limit: 100,
+      limit: NOTE_LIST_PAGE_LIMIT,
     }) as PageResponse<any>;
 
     const items = Array.isArray(response.items) ? response.items : [];
