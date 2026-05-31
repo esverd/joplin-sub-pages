@@ -890,6 +890,7 @@
 
     event.dataTransfer.clearData();
     event.dataTransfer.setData(joplinNoteDragType, JSON.stringify(payload.noteIds));
+    event.dataTransfer.setData('text/plain', payload.noteIds.join('\n'));
     event.dataTransfer.effectAllowed = 'move';
 
     dragSourceRow = row;

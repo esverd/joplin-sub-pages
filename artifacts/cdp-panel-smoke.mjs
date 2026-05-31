@@ -156,12 +156,14 @@ async function main() {
       const dataTransfer = new DataTransfer();
       row.dispatchEvent(new DragEvent('dragstart', { bubbles: true, dataTransfer }));
       const data = dataTransfer.getData('text/x-jop-note-ids');
+      const plainText = dataTransfer.getData('text/plain');
       const status = document.querySelector('.sub-pages-drag-status')?.textContent || '';
       row.dispatchEvent(new DragEvent('dragend', { bubbles: true, dataTransfer }));
       const message = [...window.messages].reverse().find(item => item.name === 'noteDragStarted');
       return {
         draggable: row.draggable,
         data: JSON.parse(data || '[]'),
+        plainText,
         status,
         message,
         draggingAfterEnd: row.classList.contains('is-dragging'),
@@ -200,6 +202,9 @@ async function main() {
   }
   if (JSON.stringify(dragPayloads.external.data) !== JSON.stringify(['external1'])) {
     throw new Error(`External result drag should include only itself: ${JSON.stringify(dragPayloads.external)}`);
+  }
+  if (dragPayloads.parent.plainText !== dragPayloads.parent.data.join('\n')) {
+    throw new Error(`Plain text drag fallback did not match note IDs: ${JSON.stringify(dragPayloads.parent)}`);
   }
   if (!dragPayloads.parent.status.includes('Joplin notebook') || dragPayloads.parent.draggingAfterEnd) {
     throw new Error(`Drag status/source state did not behave: ${JSON.stringify(dragPayloads.parent)}`);
