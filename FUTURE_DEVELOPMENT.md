@@ -2,31 +2,32 @@
 
 ## Drag And Drop Research
 
-The `benji300/joplin-favorites` plugin is a useful reference for drag and drop into a Joplin plugin panel.
+The `benji300/joplin-favorites`, `benji300/joplin-note-tabs`, `joplin/plugin-yesyoukan`, and Joplin desktop source are useful references for drag and drop with plugin panels and native note targets.
 
 Findings:
 
 - Favorites uses plain HTML5 drag/drop events inside its panel webview.
-- Native Joplin drag payloads can be read from the webview drop event:
+- Native Joplin note drags use a JSON array of note IDs on:
   - `text/x-jop-note-ids`
-  - `text/x-jop-folder-ids`
-- This suggests Sub-Pages can likely accept notes dragged from Joplin's native note list into the Sub-Pages panel.
-- This does not prove that dragging from the Sub-Pages panel into Joplin's native notebook sidebar is feasible. That would require the native sidebar to accept plugin-created drag payloads, and the public plugin API does not appear to expose native sidebar drop targets.
+- Joplin's native sidebar notebook tree accepts `text/x-jop-note-ids` drops and delegates the move to Joplin's native folder-drop logic.
+- Note Tabs and YesYouKan confirm plugin webviews can read native `text/x-jop-note-ids` payloads on drop, which makes the MIME type a stable integration point.
+- The lowest-brittleness implementation is for Sub-Pages rows to create the same payload on `dragstart` and let the native notebook sidebar perform the folder move.
+- Sub-Pages still needs a reconciliation step after the native move: if a dragged branch root changes notebooks, remove only that root's old Sub-Pages parent link. Descendants should keep their internal links and move with the branch.
 
-Potential first implementation:
+Implemented direction:
 
-1. Make Sub-Pages rows and/or notebook drop zones use HTML5 drag/drop.
-2. Accept `text/x-jop-note-ids` drops in the panel.
-3. On drop onto a page row, attach the dropped note as a child of that page.
-4. On drop onto an in-panel notebook target, call the existing branch-aware notebook move logic.
-5. Keep native sidebar drag/drop out of scope until verified in a Joplin runtime.
+1. Make current-notebook Sub-Pages rows HTML5 draggable.
+2. Set `text/x-jop-note-ids` to the dragged note IDs, including descendants for Sub-Pages branches.
+3. Track pending drag roots in the plugin backend.
+4. Reconcile parent metadata when Joplin note-change events show a dragged root moved notebooks.
+5. Keep custom notebook drop zones out of scope unless native sidebar drops prove impossible in live UAT.
 
 Open questions:
 
 - What exact payloads does current Joplin desktop provide across supported versions?
-- Can a plugin-created drag payload be dropped onto Joplin's native notebook sidebar?
-- Should drag/drop attach individual notes, full selected branches, or prompt when multiple notes are dropped?
-- How should the UI prevent accidental hierarchy changes?
+- Can a plugin-created drag payload be dropped onto Joplin's native notebook sidebar on every supported desktop platform?
+- Should a future version also accept native notes dropped into the Sub-Pages panel to attach them under a page?
+- How should the UI prevent accidental hierarchy changes if in-panel attach drops are added later?
 
 ## Interaction Follow-Ups
 
