@@ -43,6 +43,8 @@ const DEFAULT_CHILD_TITLE = 'Untitled sub-page';
 const NOTE_LIST_PAGE_LIMIT = 100;
 const RECENT_CHANGE_TIME_TTL = 10 * 60 * 1000;
 const SETTLED_REFRESH_DELAYS = [1500, 4000];
+const NATIVE_DRAG_MOVE_TTL = 2 * 60 * 1000;
+const NATIVE_DRAG_RECONCILE_DELAYS = [400, 1200, 3000, 7000, 12000];
 
 type PanelSortMode = 'recentGroups' | 'manual' | 'title';
 type SearchScope = 'all' | 'notebook';
@@ -126,6 +128,13 @@ interface PageResponse<T> {
   has_more?: boolean;
 }
 
+interface PendingNativeDragMove {
+  oldNotebookId: string;
+  oldParentId: string | null;
+  createdAt: number;
+  noteIds: string[];
+}
+
 let panelHandle: string | null = null;
 let panelReady = false;
 let refreshTimer: any = null;
@@ -142,6 +151,8 @@ let lastPanelFolderId: string | null | undefined = undefined;
 let dialogSerial = 0;
 const recentChangeTimes = new Map<string, number>();
 const panelSearchCache = new Map<string, any>();
+const pendingNativeDragMoves = new Map<string, PendingNativeDragMove>();
+let nativeDragReconcileTimers: any[] = [];
 
 joplin.plugins.register({
   onStart: async () => {
@@ -422,6 +433,11 @@ async function handlePanelMessage(message: any): Promise<any> {
       return await panelSearchResponse(typeof message?.query === 'string' ? message.query : '', scope);
     }
 
+    if (name === 'noteDragStarted') {
+      await rememberNativeNoteDrag(message);
+      return { ok: true };
+    }
+
     if (name === 'createRoot') {
       const createdId = await createRootPage();
       if (createdId) rememberSelectedNoteId(createdId);
@@ -550,6 +566,12 @@ function panelMessageNoteIds(message: any, fallbackNoteId: string): string[] {
     : [];
   if (fallbackNoteId && !noteIds.includes(fallbackNoteId)) noteIds.unshift(fallbackNoteId);
   return [...new Set<string>(noteIds)];
+}
+
+function normalizeIdArray(value: any): string[] {
+  return Array.isArray(value)
+    ? [...new Set<string>(value.filter((id: any) => typeof id === 'string' && id))]
+    : [];
 }
 
 async function panelSearchResponse(query: string, scope: SearchScope): Promise<any> {
@@ -756,11 +778,79 @@ async function refreshPanelIfSelectedFolderChanged(): Promise<void> {
 async function handleNoteChangeEvent(event: any): Promise<void> {
   const noteId = changedNoteIdFromEvent(event) ?? await selectedNoteId();
   if (noteId) markNoteRecentlyChanged(noteId);
+  await reconcilePendingNativeDragMoves(noteId || undefined);
   markPanelStateChanged();
 
   schedulePanelRefresh(200);
   scheduleSettledPanelRefreshes();
   scheduleSelectionRefresh();
+}
+
+async function rememberNativeNoteDrag(message: any): Promise<void> {
+  const branchRootIds = normalizeIdArray(message?.branchRootIds);
+  const noteIds = normalizeIdArray(message?.noteIds);
+  if (!branchRootIds.length || !noteIds.length) return;
+
+  const now = Date.now();
+  for (const rootId of branchRootIds) {
+    const note = await getNote(rootId);
+    if (!note) continue;
+
+    const meta = await getMeta(rootId);
+    pendingNativeDragMoves.set(rootId, {
+      oldNotebookId: note.parent_id,
+      oldParentId: meta.parentId,
+      createdAt: now,
+      noteIds,
+    });
+  }
+
+  scheduleNativeDragReconcileChecks();
+}
+
+function scheduleNativeDragReconcileChecks(): void {
+  for (const timer of nativeDragReconcileTimers) clearTimeout(timer);
+  nativeDragReconcileTimers = NATIVE_DRAG_RECONCILE_DELAYS.map((delay) => setTimeout(() => {
+    reconcilePendingNativeDragMoves().catch((error) => {
+      console.error('Sub-Pages native drag reconciliation failed', error);
+    });
+  }, delay));
+}
+
+async function reconcilePendingNativeDragMoves(changedNoteId?: string): Promise<void> {
+  if (!pendingNativeDragMoves.size) return;
+
+  const now = Date.now();
+  let changed = false;
+
+  for (const [rootId, pending] of [...pendingNativeDragMoves.entries()]) {
+    if (now - pending.createdAt > NATIVE_DRAG_MOVE_TTL) {
+      pendingNativeDragMoves.delete(rootId);
+      continue;
+    }
+
+    if (changedNoteId && changedNoteId !== rootId) continue;
+
+    const note = await getNote(rootId);
+    if (!note) continue;
+    if (note.parent_id === pending.oldNotebookId) continue;
+
+    pendingNativeDragMoves.delete(rootId);
+    if (pending.oldParentId) {
+      await removeChildFromParent(pending.oldParentId, rootId);
+      await clearParentId(rootId);
+    }
+
+    for (const noteId of pending.noteIds) markNoteRecentlyChanged(noteId);
+    changed = true;
+  }
+
+  if (changed) {
+    markPanelStateChanged();
+    schedulePanelRefresh(100);
+    scheduleSettledPanelRefreshes();
+    scheduleSelectionRefresh();
+  }
 }
 
 async function panelVisible(): Promise<boolean> {

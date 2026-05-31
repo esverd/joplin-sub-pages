@@ -13,7 +13,7 @@
       folder: { id: 'f1', title: 'Harness' },
       selectedNoteId: 'child1',
       sortMode: 'manual',
-      noteCount: 5,
+      noteCount: 6,
       metadataItemCount: 4,
       repairCount: 0,
       error: null,
@@ -27,7 +27,18 @@
           canMoveUp: false,
           canMoveDown: false,
           children: [
-            { id: 'child1', title: 'Beta Child', isTodo: false, todoCompleted: false, repairReason: null, canMoveUp: false, canMoveDown: true, children: [] },
+            {
+              id: 'child1',
+              title: 'Beta Child',
+              isTodo: false,
+              todoCompleted: false,
+              repairReason: null,
+              canMoveUp: false,
+              canMoveDown: true,
+              children: [
+                { id: 'grandchild1', title: 'Nested Child', isTodo: false, todoCompleted: false, repairReason: null, canMoveUp: false, canMoveDown: false, children: [] },
+              ],
+            },
             { id: 'child2', title: 'Gamma Child', isTodo: true, todoCompleted: false, repairReason: null, canMoveUp: true, canMoveDown: false, children: [] },
           ],
         },
