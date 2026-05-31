@@ -4,6 +4,7 @@
   "description": "Adds a notebook-scoped parent and child page tree panel to Joplin.",
   "scripts": {
     "dist": "webpack --env joplin-plugin-config=buildMain && webpack --env joplin-plugin-config=createArchive",
+    "typecheck": "tsc --noEmit",
     "prepare": "npm run dist",
     "updateVersion": "webpack --env joplin-plugin-config=updateVersion"
   },
