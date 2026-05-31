@@ -752,6 +752,14 @@
 
     if (action === 'openNote' && noteId && currentState) {
       updatePanelSelection(noteId, event);
+      if (event.detail >= 2) {
+        currentState.selectedNoteId = noteId;
+        render();
+        closeOpenMenus();
+        post('openNoteInNewWindow', { noteId, noteIds: [noteId] });
+        return;
+      }
+
       if (event.ctrlKey || event.metaKey || event.shiftKey) {
         render();
         return;
@@ -775,7 +783,7 @@
 
   app.addEventListener('dblclick', (event) => {
     const row = event.target.closest('.sub-pages-row[data-note-id]');
-    if (!row || event.target.closest('.sub-pages-row-menu')) return;
+    if (!row || event.target.closest('.sub-pages-row-menu') || event.target.closest('button[data-action="openNote"]')) return;
     const noteId = row.dataset.noteId;
     if (!noteId) return;
 
@@ -820,6 +828,11 @@
   });
 
   window.addEventListener('keydown', (event) => {
+    if (event.key === 'Delete' || event.key === 'Backspace') {
+      deleteSelectedNotes(event);
+      return;
+    }
+
     if (event.key !== 'Escape') return;
 
     const openMenu = app.querySelector('.sub-pages-row-menu[open]');
@@ -854,6 +867,23 @@
     const menu = event.target.closest('.sub-pages-menu');
     if (menu) handleMenuKeydown(event, menu);
   });
+
+  function deleteSelectedNotes(event) {
+    if (!currentState || busy) return;
+    if (isTextInputTarget(event.target) || event.target.closest('.sub-pages-menu')) return;
+
+    const noteIds = selectedActionNoteIds(lastPanelSelectedId || currentState.selectedNoteId);
+    if (!noteIds.length) return;
+
+    event.preventDefault();
+    closeOpenMenus();
+    post('deleteNote', { noteId: noteIds[0], noteIds });
+  }
+
+  function isTextInputTarget(target) {
+    if (!target || !target.closest) return false;
+    return !!target.closest('input, textarea, select, [contenteditable="true"]');
+  }
 
   document.addEventListener('keydown', (event) => {
     if (app.contains(event.target)) return;

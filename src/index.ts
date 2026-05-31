@@ -29,8 +29,8 @@ const NOTE_LIST_PARITY_COMMANDS = new Set([
 
 const PLUGIN_ID = 'com.codex.subPages';
 const PANEL_ID = `${PLUGIN_ID}.panel`;
-const DIALOG_MOVE_PARENT = 'subPages.moveParentDialog';
-const DIALOG_MOVE_BRANCH_TO_FOLDER = 'subPages.moveBranchToFolderDialog';
+const DIALOG_MOVE_PARENT_PREFIX = 'subPages.moveParentDialog';
+const DIALOG_MOVE_BRANCH_TO_FOLDER_PREFIX = 'subPages.moveBranchToFolderDialog';
 
 const SETTINGS_SECTION = 'subPages';
 const SETTING_PANEL_SORT_MODE = 'subPages.panelSortMode';
@@ -139,6 +139,7 @@ let hasPostedSelectedNoteId = false;
 let settledRefreshTimers: any[] = [];
 let panelStateRevision = 0;
 let lastPanelFolderId: string | null | undefined = undefined;
+let dialogSerial = 0;
 const recentChangeTimes = new Map<string, number>();
 const panelSearchCache = new Map<string, any>();
 
@@ -1059,7 +1060,7 @@ async function movePageWithDialog(noteId: string): Promise<void> {
     return `<option value="${escapeHtml(candidate.note.id)}">${escapeHtml(moveCandidateLabel(candidate))}</option>`;
   }).join('');
 
-  const handle = await joplin.views.dialogs.create(DIALOG_MOVE_PARENT);
+  const handle = await createDialog(DIALOG_MOVE_PARENT_PREFIX);
   await joplin.views.dialogs.setHtml(handle, `
     <!doctype html>
     <html>
@@ -1150,7 +1151,7 @@ async function moveBranchesToFolder(noteIds: string[]): Promise<void> {
     ? `"${branchInfo.branchRootTitles[0]}"`
     : `${branchInfo.branchRootTitles.length} selected pages`;
 
-  const handle = await joplin.views.dialogs.create(DIALOG_MOVE_BRANCH_TO_FOLDER);
+  const handle = await createDialog(DIALOG_MOVE_BRANCH_TO_FOLDER_PREFIX);
   await joplin.views.dialogs.setHtml(handle, `
     <!doctype html>
     <html>
@@ -1623,6 +1624,11 @@ function selectedNoteIdFromEvent(event: any): string | null | undefined {
 function changedNoteIdFromEvent(event: any): string | null {
   const id = event?.id ?? event?.noteId ?? event?.note?.id;
   return typeof id === 'string' && id ? id : null;
+}
+
+async function createDialog(prefix: string): Promise<string> {
+  dialogSerial += 1;
+  return await joplin.views.dialogs.create(`${prefix}.${Date.now()}.${dialogSerial}`);
 }
 
 function rememberSelectedNoteId(noteId: string | null): void {
