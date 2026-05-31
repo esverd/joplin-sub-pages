@@ -2,3 +2,9 @@ dist/
 node_modules/
 publish/
 .codex
+
+# Generated UAT/debug artifacts. Keep the browser smoke harness tracked.
+artifacts/*
+!artifacts/
+!artifacts/cdp-panel-smoke.mjs
+!artifacts/panel-harness.html
