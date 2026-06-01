@@ -15,7 +15,10 @@
   let searchState = emptySearchState();
   let searchDebounceTimer = null;
   let searchRequestSerial = 0;
+  let dragSourceRow = null;
+  let dragStatusElement = null;
   const searchDebounceMs = 380;
+  const joplinNoteDragType = 'text/x-jop-note-ids';
 
   const icons = {
     chevronDown: '<svg viewBox="0 0 16 16"><path d="m4 6 4 4 4-4"/></svg>',
@@ -71,6 +74,11 @@
   function setStatus(message) {
     statusText = message || '';
     render();
+  }
+
+  function postQuiet(name, payload) {
+    if (!api || typeof api.postMessage !== 'function') return;
+    Promise.resolve(api.postMessage(Object.assign({ name }, payload || {}))).catch(() => {});
   }
 
   function syncSelectedNote() {
@@ -255,6 +263,8 @@
       style: `--depth: ${depth};`,
     });
     row.dataset.noteId = node.id;
+    row.dataset.dragScope = 'tree';
+    row.draggable = true;
 
     const hasChildren = hasNodeChildren(node);
     const hasVisibleChildren = visibleChildren.length > 0;
@@ -324,6 +334,8 @@
       style: '--depth: 0;',
     });
     row.dataset.noteId = note.id;
+    row.dataset.dragScope = 'external';
+    row.draggable = true;
 
     const main = element('div', { className: 'sub-pages-row-main' });
     main.appendChild(element('span', { className: 'sub-pages-spacer' }));
@@ -424,6 +436,86 @@
     }
 
     return null;
+  }
+
+  function collectNodeIds(node, output) {
+    if (!node || !node.id || output.has(node.id)) return;
+    output.add(node.id);
+    (node.children || []).forEach((child) => collectNodeIds(child, output));
+  }
+
+  function treeParentMap() {
+    const output = new Map();
+
+    function visit(nodes, parentId) {
+      (nodes || []).forEach((node) => {
+        output.set(node.id, parentId || null);
+        visit(node.children || [], node.id);
+      });
+    }
+
+    visit(currentState && currentState.nodes ? currentState.nodes : [], null);
+    return output;
+  }
+
+  function hasSelectedTreeAncestor(noteId, selectedIds, parentById) {
+    let parentId = parentById.get(noteId) || null;
+    const seen = new Set();
+
+    while (parentId && !seen.has(parentId)) {
+      if (selectedIds.has(parentId)) return true;
+      seen.add(parentId);
+      parentId = parentById.get(parentId) || null;
+    }
+
+    return false;
+  }
+
+  function dragPayloadForRow(row) {
+    if (!currentState || !row) return null;
+
+    const noteId = row.dataset.noteId;
+    if (!noteId) return null;
+
+    if (row.dataset.dragScope === 'external') {
+      return {
+        noteId,
+        sourceFolderId: findExternalSearchResult(noteId)?.parentId || null,
+        branchRoots: [{ id: noteId }],
+        branchRootIds: [noteId],
+        noteIds: [noteId],
+      };
+    }
+
+    const candidateIds = selectedActionNoteIds(noteId);
+    const parentById = treeParentMap();
+    const selectedIds = new Set(candidateIds.filter((id) => parentById.has(id)));
+    if (!selectedIds.size) selectedIds.add(noteId);
+
+    const branchRootIds = [...selectedIds].filter((id) => !hasSelectedTreeAncestor(id, selectedIds, parentById));
+    const noteIds = new Set();
+
+    branchRootIds.forEach((rootId) => {
+      const rootNode = findNodeById(currentState.nodes, rootId);
+      if (rootNode) collectNodeIds(rootNode, noteIds);
+    });
+
+    if (!noteIds.size) noteIds.add(noteId);
+
+    return {
+      noteId,
+      sourceFolderId: currentState.folder ? currentState.folder.id : null,
+      branchRoots: branchRootIds.map((rootId) => ({
+        id: rootId,
+        parentId: parentById.get(rootId) || null,
+      })),
+      branchRootIds,
+      noteIds: [...noteIds],
+    };
+  }
+
+  function findExternalSearchResult(noteId) {
+    return (searchState.externalResults || []).find((note) => note.id === noteId) || null;
   }
 
   function selectedActionNoteIds(anchorNoteId) {
@@ -793,6 +885,38 @@
     post('openNoteInNewWindow', { noteId, noteIds: [noteId] });
   });
 
+  app.addEventListener('dragstart', (event) => {
+    const row = event.target.closest('.sub-pages-row[data-note-id]');
+    if (!row || !event.dataTransfer) return;
+    if (event.target.closest('input, textarea, select, .sub-pages-row-actions, .sub-pages-row-menu, .sub-pages-menu')) {
+      event.preventDefault();
+      return;
+    }
+
+    const payload = dragPayloadForRow(row);
+    if (!payload || !payload.noteIds.length) {
+      event.preventDefault();
+      return;
+    }
+
+    event.dataTransfer.clearData();
+    event.dataTransfer.setData(joplinNoteDragType, JSON.stringify(payload.noteIds));
+    event.dataTransfer.setData('text/plain', payload.noteIds.join('\n'));
+    event.dataTransfer.effectAllowed = 'move';
+
+    dragSourceRow = row;
+    dragSourceRow.classList.add('is-dragging');
+    showDragStatus(payload.noteIds.length === 1
+      ? 'Drop on a Joplin notebook to move this page.'
+      : `Drop on a Joplin notebook to move ${payload.noteIds.length} pages.`);
+    closeOpenMenus();
+    postQuiet('noteDragStarted', payload);
+  });
+
+  app.addEventListener('dragend', () => {
+    clearDragState();
+  });
+
   app.addEventListener('input', (event) => {
     const input = event.target.closest('input[data-action="search"]');
     if (!input) return;
@@ -1156,6 +1280,28 @@
     menuPanel.style.removeProperty('bottom');
     menuPanel.style.removeProperty('left');
     menuPanel.style.removeProperty('top');
+  }
+
+  function showDragStatus(message) {
+    if (!dragStatusElement) {
+      dragStatusElement = element('div', {
+        className: 'sub-pages-drag-status',
+        role: 'status',
+      });
+    }
+
+    if (!app.contains(dragStatusElement)) {
+      app.appendChild(dragStatusElement);
+    }
+
+    dragStatusElement.textContent = message || '';
+    dragStatusElement.hidden = !message;
+  }
+
+  function clearDragState() {
+    if (dragSourceRow) dragSourceRow.classList.remove('is-dragging');
+    dragSourceRow = null;
+    if (dragStatusElement) dragStatusElement.hidden = true;
   }
 
   function isPanelInteractionTarget(target) {

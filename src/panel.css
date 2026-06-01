@@ -176,6 +176,15 @@ body {
   width: 100%;
 }
 
+.sub-pages-row[draggable="true"] {
+  cursor: grab;
+}
+
+.sub-pages-row.is-dragging {
+  cursor: grabbing;
+  opacity: 0.58;
+}
+
 .sub-pages-row.is-child::before {
   border-left: 1px solid var(--joplin-divider-color, rgba(127, 127, 127, 0.28));
   bottom: -4px;
@@ -415,6 +424,28 @@ body {
 
 .sub-pages-row.has-open-menu {
   z-index: 20;
+}
+
+.sub-pages-drag-status {
+  background: var(--joplin-background-color, #fff);
+  border: 1px solid var(--joplin-divider-color, rgba(127, 127, 127, 0.24));
+  border-radius: 6px;
+  bottom: 10px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.18);
+  color: var(--joplin-color, #222);
+  font-size: 12px;
+  left: 10px;
+  line-height: 1.35;
+  max-width: calc(100vw - 20px);
+  padding: 7px 9px;
+  pointer-events: none;
+  position: fixed;
+  right: 10px;
+  z-index: 30;
+}
+
+.sub-pages-drag-status[hidden] {
+  display: none;
 }
 
 .sub-pages-row:hover .sub-pages-row-actions,

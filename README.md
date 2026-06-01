@@ -20,6 +20,7 @@ Sub-Pages adds a notebook-scoped page tree panel to Joplin. Notes can contain ch
 - The panel row menu mirrors common native note-list actions, including open, tags, to-do conversion, move, duplicate, delete, copy links, note properties, and a command palette bridge, alongside Sub-Pages hierarchy actions.
 - Double-clicking a panel row opens the note in a new window.
 - Ctrl-click and Shift-click select multiple panel rows. Multi-selection is used by panel actions such as moving several notes or branches to a notebook.
+- Drag a Sub-Pages row onto Joplin's native notebook sidebar to move that page. Dragging a branch moves the branch root and its descendants together, while preserving links inside the moved branch.
 - **Move branch to notebook...** moves selected pages and their Sub-Pages descendants together so parent/child links stay valid after a cross-notebook move.
 
 ## Setup in Joplin
@@ -39,7 +40,7 @@ Joplin's public plugin API does not let plugins fully replace the native note li
 Because of that, this plugin uses these v1 behaviors:
 
 - The panel is the authoritative hierarchy UI; the native note list remains unchanged.
-- Drag/drop is deferred; use panel buttons and note context menu commands. Native **Move note to notebook...** remains available, and Sub-Pages adds **Move branch to notebook...** for hierarchy-aware moves.
+- Drag/drop is supported from the Sub-Pages panel to Joplin's native notebook sidebar, using Joplin's native note-drag payload. Dragging from Joplin's native note list into Sub-Pages to create hierarchy links is not implemented.
 - Collapse state is local to the panel and does not sync.
 - Mobile clients without the plugin still show ordinary Joplin notes. The hierarchy is invisible but harmless.
 - The plugin does not rewrite `note.order`.

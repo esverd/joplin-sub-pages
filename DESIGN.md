@@ -21,7 +21,15 @@ Panel search uses Joplin's own search endpoint rather than a local title-only fi
 
 Panel search keeps the last completed result set visible while a new query is debounced. This avoids replacing the whole tree on every keystroke; the panel only re-renders the result list when Joplin returns the next search response.
 
-Native note-list drag/drop and the native search box are not exposed as movable webview components. For simple note moves, the panel delegates to Joplin's `moveToFolder` command. For hierarchy-aware moves, Sub-Pages uses Joplin's data API to update the selected branch notes' notebook IDs and clears only the moved branch root's old parent link. This keeps descendants in the same notebook as their parent without trying to emulate native drag/drop internals.
+Native note-list components and the native search box are not exposed as movable webview components. The panel keeps its own row rendering and delegates to Joplin APIs or native commands where possible.
+
+For drag/drop from Sub-Pages into native notebooks, the panel reuses Joplin's native note-drag contract instead of building a custom notebook drop target. Native Joplin note drags set a JSON array of note IDs on `text/x-jop-note-ids`, and the native sidebar notebook tree already accepts that payload. Sub-Pages rows are HTML5-draggable and set the same payload, with `effectAllowed = 'move'`, so the actual notebook move is handled by Joplin's sidebar.
+
+When a tree row is dragged, the payload contains the dragged branch root plus its visible Sub-Pages descendants. If multiple panel rows are selected and the dragged row is part of that selection, selected descendants are de-duped under their selected ancestor so each branch is represented once. Search results from other notebooks drag only that single note, because their Sub-Pages descendants are not loaded in the current tree.
+
+The plugin still has one hierarchy-specific reconciliation step after Joplin performs the native move. On drag start, the panel tells the backend which branch roots were dragged, their source notebook, and their source Sub-Pages parent when known. The backend tracks those roots briefly. When Joplin note-change events show that a dragged root changed notebooks, Sub-Pages clears only that root's old `subPages.parentId` and removes it from the old parent's `subPages.childIds`. Descendants keep their existing internal links, so the moved branch remains intact in the destination notebook.
+
+For menu-driven moves, the panel still delegates simple note moves to Joplin's `moveToFolder` command where possible. The Sub-Pages-specific **Move branch to notebook...** command uses Joplin's data API to update the selected branch notes' notebook IDs and performs the same root-only hierarchy detach.
 
 The panel supports local multi-selection with Ctrl-click and Shift-click. That selection is passed to native list-style commands where possible, and to Sub-Pages branch commands when hierarchy metadata needs to be preserved.
 
