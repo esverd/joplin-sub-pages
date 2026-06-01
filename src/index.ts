@@ -135,6 +135,11 @@ interface PendingNativeDragMove {
   noteIds: string[];
 }
 
+interface NativeDragBranchRoot {
+  id: string;
+  parentId?: string | null;
+}
+
 let panelHandle: string | null = null;
 let panelReady = false;
 let refreshTimer: any = null;
@@ -792,20 +797,55 @@ async function rememberNativeNoteDrag(message: any): Promise<void> {
   if (!branchRootIds.length || !noteIds.length) return;
 
   const now = Date.now();
+  const sourceFolderId = nonEmptyString(message?.sourceFolderId);
+  const branchRootById = nativeDragBranchRootMap(message);
   for (const rootId of branchRootIds) {
-    const note = await getNote(rootId);
-    if (!note) continue;
+    let oldNotebookId = sourceFolderId;
+    let oldParentId = branchRootById.has(rootId) ? branchRootById.get(rootId)!.parentId : undefined;
 
-    const meta = await getMeta(rootId);
+    if (!oldNotebookId || oldParentId === undefined) {
+      const note = await getNote(rootId);
+      if (!note) continue;
+
+      if (!oldNotebookId) oldNotebookId = note.parent_id;
+      if (oldParentId === undefined) {
+        const meta = await getMeta(rootId);
+        oldParentId = meta.parentId;
+      }
+    }
+
     pendingNativeDragMoves.set(rootId, {
-      oldNotebookId: note.parent_id,
-      oldParentId: meta.parentId,
+      oldNotebookId,
+      oldParentId: oldParentId ?? null,
       createdAt: now,
       noteIds,
     });
   }
 
   scheduleNativeDragReconcileChecks();
+}
+
+function nativeDragBranchRootMap(message: any): Map<string, NativeDragBranchRoot> {
+  const output = new Map<string, NativeDragBranchRoot>();
+  const roots = Array.isArray(message?.branchRoots) ? message.branchRoots : [];
+
+  for (const root of roots) {
+    const id = nonEmptyString(root?.id);
+    if (!id) continue;
+
+    const value: NativeDragBranchRoot = { id };
+    if (Object.prototype.hasOwnProperty.call(root, 'parentId')) {
+      value.parentId = nonEmptyString(root.parentId);
+    }
+
+    output.set(id, value);
+  }
+
+  return output;
+}
+
+function nonEmptyString(value: any): string | null {
+  return typeof value === 'string' && value ? value : null;
 }
 
 function scheduleNativeDragReconcileChecks(): void {
@@ -817,8 +857,16 @@ function scheduleNativeDragReconcileChecks(): void {
   }, delay));
 }
 
+function clearNativeDragReconcileTimers(): void {
+  for (const timer of nativeDragReconcileTimers) clearTimeout(timer);
+  nativeDragReconcileTimers = [];
+}
+
 async function reconcilePendingNativeDragMoves(changedNoteId?: string): Promise<void> {
-  if (!pendingNativeDragMoves.size) return;
+  if (!pendingNativeDragMoves.size) {
+    clearNativeDragReconcileTimers();
+    return;
+  }
 
   const now = Date.now();
   let changed = false;
@@ -851,6 +899,8 @@ async function reconcilePendingNativeDragMoves(changedNoteId?: string): Promise<
     scheduleSettledPanelRefreshes();
     scheduleSelectionRefresh();
   }
+
+  if (!pendingNativeDragMoves.size) clearNativeDragReconcileTimers();
 }
 
 async function panelVisible(): Promise<boolean> {

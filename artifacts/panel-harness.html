@@ -21,6 +21,7 @@
         {
           id: 'parent1',
           title: 'Alpha Parent',
+          parentId: null,
           isTodo: false,
           todoCompleted: false,
           repairReason: null,
@@ -30,20 +31,21 @@
             {
               id: 'child1',
               title: 'Beta Child',
+              parentId: 'parent1',
               isTodo: false,
               todoCompleted: false,
               repairReason: null,
               canMoveUp: false,
               canMoveDown: true,
               children: [
-                { id: 'grandchild1', title: 'Nested Child', isTodo: false, todoCompleted: false, repairReason: null, canMoveUp: false, canMoveDown: false, children: [] },
+                { id: 'grandchild1', title: 'Nested Child', parentId: 'child1', isTodo: false, todoCompleted: false, repairReason: null, canMoveUp: false, canMoveDown: false, children: [] },
               ],
             },
-            { id: 'child2', title: 'Gamma Child', isTodo: true, todoCompleted: false, repairReason: null, canMoveUp: true, canMoveDown: false, children: [] },
+            { id: 'child2', title: 'Gamma Child', parentId: 'parent1', isTodo: true, todoCompleted: false, repairReason: null, canMoveUp: true, canMoveDown: false, children: [] },
           ],
         },
-        { id: 'root2', title: 'Delta Root', isTodo: false, todoCompleted: false, repairReason: null, canMoveUp: false, canMoveDown: false, children: [] },
-        { id: 'root3', title: 'Epsilon Root', isTodo: false, todoCompleted: false, repairReason: null, canMoveUp: false, canMoveDown: false, children: [] },
+        { id: 'root2', title: 'Delta Root', parentId: null, isTodo: false, todoCompleted: false, repairReason: null, canMoveUp: false, canMoveDown: false, children: [] },
+        { id: 'root3', title: 'Epsilon Root', parentId: null, isTodo: false, todoCompleted: false, repairReason: null, canMoveUp: false, canMoveDown: false, children: [] },
       ],
     };
     window.mockBodies = {

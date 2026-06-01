@@ -480,6 +480,8 @@
     if (row.dataset.dragScope === 'external') {
       return {
         noteId,
+        sourceFolderId: findExternalSearchResult(noteId)?.parentId || null,
+        branchRoots: [{ id: noteId }],
         branchRootIds: [noteId],
         noteIds: [noteId],
       };
@@ -502,9 +504,18 @@
 
     return {
       noteId,
+      sourceFolderId: currentState.folder ? currentState.folder.id : null,
+      branchRoots: branchRootIds.map((rootId) => ({
+        id: rootId,
+        parentId: parentById.get(rootId) || null,
+      })),
       branchRootIds,
       noteIds: [...noteIds],
     };
+  }
+
+  function findExternalSearchResult(noteId) {
+    return (searchState.externalResults || []).find((note) => note.id === noteId) || null;
   }
 
   function selectedActionNoteIds(anchorNoteId) {

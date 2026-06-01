@@ -197,11 +197,23 @@ async function main() {
   if (JSON.stringify(dragPayloads.multi.message?.branchRootIds) !== JSON.stringify(['parent1'])) {
     throw new Error(`Multi-select drag did not de-dupe child under selected parent: ${JSON.stringify(dragPayloads.multi)}`);
   }
+  if (dragPayloads.multi.message?.sourceFolderId !== 'f1') {
+    throw new Error(`Tree drag did not send source notebook: ${JSON.stringify(dragPayloads.multi)}`);
+  }
+  if (JSON.stringify(dragPayloads.multi.message?.branchRoots) !== JSON.stringify([{ id: 'parent1', parentId: null }])) {
+    throw new Error(`Multi-select drag did not send de-duped source branch roots: ${JSON.stringify(dragPayloads.multi)}`);
+  }
   if (JSON.stringify(dragPayloads.multi.data) !== JSON.stringify(['parent1', 'child1', 'grandchild1', 'child2'])) {
     throw new Error(`Multi-select branch drag payload was wrong: ${JSON.stringify(dragPayloads.multi)}`);
   }
   if (JSON.stringify(dragPayloads.external.data) !== JSON.stringify(['external1'])) {
     throw new Error(`External result drag should include only itself: ${JSON.stringify(dragPayloads.external)}`);
+  }
+  if (dragPayloads.external.message?.sourceFolderId !== 'archive') {
+    throw new Error(`External drag did not send source notebook: ${JSON.stringify(dragPayloads.external)}`);
+  }
+  if (JSON.stringify(dragPayloads.external.message?.branchRoots) !== JSON.stringify([{ id: 'external1' }])) {
+    throw new Error(`External drag should send one root with unknown hierarchy parent: ${JSON.stringify(dragPayloads.external)}`);
   }
   if (dragPayloads.parent.plainText !== dragPayloads.parent.data.join('\n')) {
     throw new Error(`Plain text drag fallback did not match note IDs: ${JSON.stringify(dragPayloads.parent)}`);
