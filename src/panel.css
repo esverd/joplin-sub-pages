@@ -30,6 +30,7 @@ body {
   flex-direction: column;
   gap: 8px;
   max-width: 100%;
+  min-height: 100%;
   min-width: 0;
   overflow-x: hidden;
   padding: 8px;
@@ -239,6 +240,20 @@ body {
   background: var(--joplin-background-color-hover3, rgba(127, 127, 127, 0.12));
 }
 
+.sub-pages-row[draggable="true"] {
+  cursor: grab;
+}
+
+.sub-pages-row.is-dragging {
+  opacity: 0.58;
+}
+
+.sub-pages-row.is-drop-target {
+  background: var(--joplin-selected-color, rgba(80, 130, 210, 0.18));
+  outline: 2px solid var(--joplin-selected-color, rgba(80, 130, 210, 0.65));
+  outline-offset: -2px;
+}
+
 .sub-pages-row.is-selected {
   background: var(--joplin-selected-color, rgba(80, 130, 210, 0.22));
 }
@@ -361,6 +376,25 @@ body {
   flex-direction: column;
   gap: 4px;
   min-width: 0;
+}
+
+.sub-pages-root-drop-zone {
+  border: 1px dashed transparent;
+  border-radius: 4px;
+  flex: 0 0 0;
+  min-height: 0;
+  transition: background-color 120ms ease, border-color 120ms ease, flex-basis 120ms ease, min-height 120ms ease;
+}
+
+.sub-pages-root-drop-zone.is-visible {
+  border-color: var(--joplin-divider-color, rgba(127, 127, 127, 0.42));
+  flex: 1 0 28px;
+  min-height: 28px;
+}
+
+.sub-pages-root-drop-zone.is-drop-target {
+  background: var(--joplin-selected-color, rgba(80, 130, 210, 0.14));
+  border-color: var(--joplin-selected-color, rgba(80, 130, 210, 0.72));
 }
 
 .sub-pages-section-heading {
@@ -497,6 +531,9 @@ body {
   border-radius: 4px;
   color: inherit;
   display: block;
+  flex: 0 1 auto;
+  justify-content: flex-start;
+  max-width: 100%;
   min-height: 26px;
   min-width: 0;
   overflow: hidden;

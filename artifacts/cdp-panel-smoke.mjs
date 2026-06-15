@@ -165,6 +165,66 @@ async function main() {
     throw new Error(`Multi-select branch move menu did not render: ${JSON.stringify(multiSelect)}`);
   }
 
+  const dragDrop = await evalJs(`(async () => {
+    window.messages.length = 0;
+    const data = new DataTransfer();
+    const child = document.querySelector('.sub-pages-row[data-note-id="child1"]');
+    const target = document.querySelector('.sub-pages-row[data-note-id="root2"]');
+    child.dispatchEvent(new DragEvent('dragstart', { bubbles: true, cancelable: true, dataTransfer: data }));
+    target.dispatchEvent(new DragEvent('dragover', { bubbles: true, cancelable: true, dataTransfer: data }));
+    target.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: data }));
+    child.dispatchEvent(new DragEvent('dragend', { bubbles: true, cancelable: true, dataTransfer: data }));
+    await new Promise(r => setTimeout(r, 150));
+
+    const childToRoot = document.querySelector('.sub-pages-row[data-note-id="child2"]');
+    const rootDropZone = document.querySelector('.sub-pages-root-drop-zone');
+    const rootData = new DataTransfer();
+    childToRoot.dispatchEvent(new DragEvent('dragstart', { bubbles: true, cancelable: true, dataTransfer: rootData }));
+    rootDropZone.dispatchEvent(new DragEvent('dragover', { bubbles: true, cancelable: true, dataTransfer: rootData }));
+    rootDropZone.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: rootData }));
+    childToRoot.dispatchEvent(new DragEvent('dragend', { bubbles: true, cancelable: true, dataTransfer: rootData }));
+    await new Promise(r => setTimeout(r, 150));
+
+    return window.messages.filter(message => message.name === 'dropOnNote' || message.name === 'dropToRoot');
+  })()`);
+  if (!dragDrop.some(message => message.name === 'dropOnNote' && message.noteId === 'child1' && message.targetNoteId === 'root2')) {
+    throw new Error(`Drag onto row did not send the expected hierarchy move: ${JSON.stringify(dragDrop)}`);
+  }
+  if (!dragDrop.some(message => message.name === 'dropToRoot' && message.noteId === 'child2')) {
+    throw new Error(`Drag to blank root area did not send the expected promote move: ${JSON.stringify(dragDrop)}`);
+  }
+
+  const invalidDragDrop = await evalJs(`(async () => {
+    window.messages.length = 0;
+    const selfData = new DataTransfer();
+    const parent = document.querySelector('.sub-pages-row[data-note-id="parent1"]');
+    parent.dispatchEvent(new DragEvent('dragstart', { bubbles: true, cancelable: true, dataTransfer: selfData }));
+    parent.dispatchEvent(new DragEvent('dragover', { bubbles: true, cancelable: true, dataTransfer: selfData }));
+    parent.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: selfData }));
+    parent.dispatchEvent(new DragEvent('dragend', { bubbles: true, cancelable: true, dataTransfer: selfData }));
+
+    const descendantData = new DataTransfer();
+    const child = document.querySelector('.sub-pages-row[data-note-id="child1"]');
+    parent.dispatchEvent(new DragEvent('dragstart', { bubbles: true, cancelable: true, dataTransfer: descendantData }));
+    child.dispatchEvent(new DragEvent('dragover', { bubbles: true, cancelable: true, dataTransfer: descendantData }));
+    child.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: descendantData }));
+    parent.dispatchEvent(new DragEvent('dragend', { bubbles: true, cancelable: true, dataTransfer: descendantData }));
+
+    const rootData = new DataTransfer();
+    const root = document.querySelector('.sub-pages-row[data-note-id="root2"]');
+    const rootDropZone = document.querySelector('.sub-pages-root-drop-zone');
+    root.dispatchEvent(new DragEvent('dragstart', { bubbles: true, cancelable: true, dataTransfer: rootData }));
+    rootDropZone.dispatchEvent(new DragEvent('dragover', { bubbles: true, cancelable: true, dataTransfer: rootData }));
+    rootDropZone.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: rootData }));
+    root.dispatchEvent(new DragEvent('dragend', { bubbles: true, cancelable: true, dataTransfer: rootData }));
+    await new Promise(r => setTimeout(r, 150));
+
+    return window.messages.filter(message => message.name === 'dropOnNote' || message.name === 'dropToRoot');
+  })()`);
+  if (invalidDragDrop.length) {
+    throw new Error(`Invalid drag/drop operations sent messages: ${JSON.stringify(invalidDragDrop)}`);
+  }
+
   const menuKeys = await evalJs(`(async () => {
     const trigger = document.querySelector('.sub-pages-row.is-selected .sub-pages-menu-trigger');
     trigger.focus();
@@ -178,7 +238,7 @@ async function main() {
     return { first, second, openAfterEscape: document.querySelector('.sub-pages-row-menu[open]') !== null };
   })()`);
 
-  console.log(JSON.stringify({ responsive, search, noResults, bodySearch, notebookScopeSearch, multiSelect, menuKeys }, null, 2));
+  console.log(JSON.stringify({ responsive, search, noResults, bodySearch, notebookScopeSearch, multiSelect, dragDrop, invalidDragDrop, menuKeys }, null, 2));
   cdp.close();
 }
 

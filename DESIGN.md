@@ -25,6 +25,8 @@ Native note-list drag/drop and the native search box are not exposed as movable 
 
 The panel supports local multi-selection with Ctrl-click and Shift-click. That selection is passed to native list-style commands where possible, and to Sub-Pages branch commands when hierarchy metadata needs to be preserved.
 
+The panel also supports hierarchy drag/drop inside the custom webview. Dropping one note row onto another calls the same parent-linking path used by **Move under...**. Dropping a child note onto the blank root drop area clears its parent link and promotes it to the Sub-Pages root.
+
 Collapse state is local panel state. It is not stored in synced note metadata.
 
 Tree refreshes are intentionally coarse-grained. Startup, explicit refresh, settings changes, and Sub-Pages write commands rebuild the tree. Note selection changes only update the highlight, and sync completion does not trigger a full tree rebuild.

@@ -15,6 +15,9 @@
   let searchState = emptySearchState();
   let searchDebounceTimer = null;
   let searchRequestSerial = 0;
+  let draggedNoteId = null;
+  let dropTargetNoteId = null;
+  let dropToRootActive = false;
   const searchDebounceMs = 380;
 
   const icons = {
@@ -141,6 +144,18 @@
         const tree = element('div', { className: 'sub-pages-tree', role: 'tree' });
         visibleNodes.forEach((node) => renderNode(node, 0, tree, search));
         root.appendChild(tree);
+      }
+
+      if (!search.active && currentState.nodes.length) {
+        root.appendChild(element('div', {
+          className: [
+            'sub-pages-root-drop-zone',
+            draggedNoteId ? 'is-visible' : '',
+            dropToRootActive ? 'is-drop-target' : '',
+          ].filter(Boolean).join(' '),
+          role: 'presentation',
+          ariaLabel: 'Drop here to promote to root',
+        }));
       }
 
       if (externalResults.length) {
@@ -288,6 +303,7 @@
       style: `--depth: ${depth};`,
     });
     row.dataset.noteId = node.id;
+    row.draggable = !search.active;
 
     const hasChildren = hasNodeChildren(node);
     const hasVisibleChildren = visibleChildren.length > 0;
@@ -457,6 +473,25 @@
     }
 
     return null;
+  }
+
+  function nodeContains(node, noteId) {
+    if (!node || !noteId) return false;
+    if (node.id === noteId) return true;
+    return (node.children || []).some((child) => nodeContains(child, noteId));
+  }
+
+  function canDropOnRow(draggedId, targetId) {
+    if (!draggedId || !targetId || draggedId === targetId) return false;
+    const draggedNode = findNodeById(currentState && currentState.nodes ? currentState.nodes : [], draggedId);
+    const targetNode = findNodeById(currentState && currentState.nodes ? currentState.nodes : [], targetId);
+    if (!draggedNode || !targetNode) return false;
+    return !nodeContains(draggedNode, targetId);
+  }
+
+  function canDropToRoot(noteId) {
+    const node = findNodeById(currentState && currentState.nodes ? currentState.nodes : [], noteId);
+    return !!(node && node.parentId);
   }
 
   function selectedActionNoteIds(anchorNoteId) {
@@ -797,6 +832,98 @@
     post('openNoteInNewWindow', { noteId, noteIds: [noteId] });
   });
 
+  app.addEventListener('dragstart', (event) => {
+    const row = event.target.closest('.sub-pages-row[data-note-id]');
+    if (!row || row.classList.contains('sub-pages-external-row')) return;
+    if (busy || normalizedSearchQuery()) {
+      event.preventDefault();
+      return;
+    }
+    if (event.target.closest('.sub-pages-row-actions') || event.target.closest('.sub-pages-row-menu')) {
+      event.preventDefault();
+      return;
+    }
+
+    const noteId = row.dataset.noteId;
+    if (!noteId) return;
+
+    draggedNoteId = noteId;
+    dropTargetNoteId = null;
+    dropToRootActive = false;
+    updatePanelSelection(noteId, event);
+    closeOpenMenus();
+
+    if (event.dataTransfer) {
+      event.dataTransfer.effectAllowed = 'move';
+      event.dataTransfer.setData('text/plain', noteId);
+      event.dataTransfer.setData('application/x-joplin-sub-pages-note-id', noteId);
+    }
+
+    setDragVisuals(row, null, false);
+  });
+
+  app.addEventListener('dragover', (event) => {
+    if (!draggedNoteId || busy || normalizedSearchQuery()) return;
+
+    const row = event.target.closest('.sub-pages-row[data-note-id]');
+    const rootDropZone = event.target.closest('.sub-pages-root-drop-zone');
+    const canDropOnTargetRow = !!row && !row.classList.contains('sub-pages-external-row') && canDropOnRow(draggedNoteId, row.dataset.noteId);
+    const canDropOnRootZone = !!rootDropZone && canDropToRoot(draggedNoteId);
+
+    if (!canDropOnTargetRow && !canDropOnRootZone) return;
+
+    event.preventDefault();
+    if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
+
+    const nextDropTargetNoteId = canDropOnTargetRow ? row.dataset.noteId : null;
+    const nextDropToRootActive = !canDropOnTargetRow && canDropOnRootZone;
+    if (dropTargetNoteId !== nextDropTargetNoteId || dropToRootActive !== nextDropToRootActive) {
+      dropTargetNoteId = nextDropTargetNoteId;
+      dropToRootActive = nextDropToRootActive;
+      setDragVisuals(app.querySelector(`.sub-pages-row[data-note-id="${cssEscape(draggedNoteId)}"]`), canDropOnTargetRow ? row : null, dropToRootActive);
+    }
+  });
+
+  app.addEventListener('dragleave', (event) => {
+    if (!draggedNoteId) return;
+    if (event.relatedTarget && app.contains(event.relatedTarget)) return;
+    dropTargetNoteId = null;
+    dropToRootActive = false;
+    setDragVisuals(app.querySelector(`.sub-pages-row[data-note-id="${cssEscape(draggedNoteId)}"]`), null, false);
+  });
+
+  app.addEventListener('drop', (event) => {
+    if (!draggedNoteId || busy || normalizedSearchQuery()) return;
+
+    const row = event.target.closest('.sub-pages-row[data-note-id]');
+    const rootDropZone = event.target.closest('.sub-pages-root-drop-zone');
+    const targetNoteId = row && !row.classList.contains('sub-pages-external-row') && canDropOnRow(draggedNoteId, row.dataset.noteId) ? row.dataset.noteId : null;
+    const dropToRoot = !targetNoteId && !!rootDropZone && canDropToRoot(draggedNoteId);
+    const noteId = draggedNoteId;
+
+    if (!targetNoteId && !dropToRoot) return;
+
+    event.preventDefault();
+    draggedNoteId = null;
+    dropTargetNoteId = null;
+    dropToRootActive = false;
+    clearDragVisuals();
+
+    if (targetNoteId && targetNoteId !== noteId) {
+      post('dropOnNote', { noteId, targetNoteId });
+    } else if (dropToRoot) {
+      post('dropToRoot', { noteId });
+    }
+  });
+
+  app.addEventListener('dragend', () => {
+    if (!draggedNoteId && !dropTargetNoteId && !dropToRootActive) return;
+    draggedNoteId = null;
+    dropTargetNoteId = null;
+    dropToRootActive = false;
+    clearDragVisuals();
+  });
+
   app.addEventListener('input', (event) => {
     const input = event.target.closest('input[data-action="search"]');
     if (!input) return;
@@ -895,6 +1022,29 @@
     }
     searchRequestSerial += 1;
     searchState = emptySearchState();
+  }
+
+  function setDragVisuals(draggedRow, targetRow, rootTarget) {
+    clearDragVisuals();
+    if (draggedRow) draggedRow.classList.add('is-dragging');
+    if (targetRow) targetRow.classList.add('is-drop-target');
+    app.querySelectorAll('.sub-pages-root-drop-zone').forEach((zone) => {
+      zone.classList.add('is-visible');
+      zone.classList.toggle('is-drop-target', !!rootTarget);
+    });
+  }
+
+  function clearDragVisuals() {
+    app.querySelectorAll('.sub-pages-row.is-dragging').forEach((row) => row.classList.remove('is-dragging'));
+    app.querySelectorAll('.sub-pages-row.is-drop-target').forEach((row) => row.classList.remove('is-drop-target'));
+    app.querySelectorAll('.sub-pages-root-drop-zone').forEach((zone) => {
+      zone.classList.remove('is-visible', 'is-drop-target');
+    });
+  }
+
+  function cssEscape(value) {
+    if (window.CSS && typeof window.CSS.escape === 'function') return window.CSS.escape(value);
+    return String(value || '').replace(/["\\]/g, '\\$&');
   }
 
   function scheduleSearch(delay) {
