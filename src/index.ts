@@ -509,6 +509,20 @@ async function handlePanelMessage(message: any): Promise<any> {
       return panelStateResponse();
     }
 
+    if (name === 'dropOnNote' && noteId) {
+      const targetNoteId = typeof message?.targetNoteId === 'string' ? message.targetNoteId : '';
+      if (!targetNoteId) return { ok: false, message: 'Drop target is missing.' };
+      await movePageUnderParent(noteId, targetNoteId);
+      markPanelStateChanged();
+      return panelStateResponse();
+    }
+
+    if (name === 'dropToRoot' && noteId) {
+      await promotePageToRoot(noteId);
+      markPanelStateChanged();
+      return panelStateResponse();
+    }
+
     if (name === 'moveBranchToFolder' && noteId) {
       await moveBranchesToFolder(noteIds.length ? noteIds : [noteId]);
       markPanelStateChanged();
@@ -1180,6 +1194,26 @@ async function attachPageToParent(child: NoteSummary, parent: NoteSummary): Prom
   await setParentId(child.id, parent.id);
   await appendChildId(parent.id, child.id);
   return true;
+}
+
+async function movePageUnderParent(childId: string, parentId: string): Promise<void> {
+  const child = await getNote(childId);
+  if (!child) {
+    await notify('The dragged page could not be loaded.');
+    return;
+  }
+
+  const parent = await getNote(parentId);
+  if (!parent) {
+    await notify('The drop target page could not be loaded.');
+    return;
+  }
+
+  const attached = await attachPageToParent(child, parent);
+  if (!attached) return;
+
+  await openNote(child.id);
+  await showToast(`Moved "${displayTitle(child)}" under "${displayTitle(parent)}".`);
 }
 
 async function movePageWithDialog(noteId: string): Promise<void> {

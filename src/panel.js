@@ -17,6 +17,9 @@
   let searchRequestSerial = 0;
   let dragSourceRow = null;
   let dragStatusElement = null;
+  let draggedNoteId = null;
+  let dropTargetNoteId = null;
+  let dropToRootActive = false;
   const searchDebounceMs = 380;
   const joplinNoteDragType = 'text/x-jop-note-ids';
 
@@ -148,6 +151,18 @@
         const tree = element('div', { className: 'sub-pages-tree', role: 'tree' });
         visibleNodes.forEach((node) => renderNode(node, 0, tree, search));
         root.appendChild(tree);
+      }
+
+      if (!search.active && currentState.nodes.length) {
+        root.appendChild(element('div', {
+          className: [
+            'sub-pages-root-drop-zone',
+            draggedNoteId ? 'is-visible' : '',
+            dropToRootActive ? 'is-drop-target' : '',
+          ].filter(Boolean).join(' '),
+          role: 'presentation',
+          ariaLabel: 'Drop here to promote to root',
+        }));
       }
 
       if (externalResults.length) {
@@ -516,6 +531,25 @@
 
   function findExternalSearchResult(noteId) {
     return (searchState.externalResults || []).find((note) => note.id === noteId) || null;
+  }
+
+  function nodeContains(node, noteId) {
+    if (!node || !noteId) return false;
+    if (node.id === noteId) return true;
+    return (node.children || []).some((child) => nodeContains(child, noteId));
+  }
+
+  function canDropOnRow(draggedId, targetId) {
+    if (!draggedId || !targetId || draggedId === targetId) return false;
+    const draggedNode = findNodeById(currentState && currentState.nodes ? currentState.nodes : [], draggedId);
+    const targetNode = findNodeById(currentState && currentState.nodes ? currentState.nodes : [], targetId);
+    if (!draggedNode || !targetNode) return false;
+    return !nodeContains(draggedNode, targetId);
+  }
+
+  function canDropToRoot(noteId) {
+    const node = findNodeById(currentState && currentState.nodes ? currentState.nodes : [], noteId);
+    return !!(node && node.parentId);
   }
 
   function selectedActionNoteIds(anchorNoteId) {
@@ -902,8 +936,12 @@
     event.dataTransfer.clearData();
     event.dataTransfer.setData(joplinNoteDragType, JSON.stringify(payload.noteIds));
     event.dataTransfer.setData('text/plain', payload.noteIds.join('\n'));
+    if (payload.noteId) event.dataTransfer.setData('application/x-joplin-sub-pages-note-id', payload.noteId);
     event.dataTransfer.effectAllowed = 'move';
 
+    draggedNoteId = null;
+    dropTargetNoteId = null;
+    dropToRootActive = false;
     dragSourceRow = row;
     dragSourceRow.classList.add('is-dragging');
     showDragStatus(payload.noteIds.length === 1
@@ -911,9 +949,72 @@
       : `Drop on a Joplin notebook to move ${payload.noteIds.length} pages.`);
     closeOpenMenus();
     postQuiet('noteDragStarted', payload);
+
+    if (!busy && !normalizedSearchQuery() && row.dataset.dragScope === 'tree') {
+      draggedNoteId = payload.noteId;
+      updatePanelSelection(payload.noteId, event);
+      setDragVisuals(row, null, false);
+    }
+  });
+
+  app.addEventListener('dragover', (event) => {
+    if (!draggedNoteId || busy || normalizedSearchQuery()) return;
+
+    const row = event.target.closest('.sub-pages-row[data-note-id]');
+    const rootDropZone = event.target.closest('.sub-pages-root-drop-zone');
+    const canDropOnTargetRow = !!row && !row.classList.contains('sub-pages-external-row') && canDropOnRow(draggedNoteId, row.dataset.noteId);
+    const canDropOnRootZone = !!rootDropZone && canDropToRoot(draggedNoteId);
+
+    if (!canDropOnTargetRow && !canDropOnRootZone) return;
+
+    event.preventDefault();
+    if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
+
+    const nextDropTargetNoteId = canDropOnTargetRow ? row.dataset.noteId : null;
+    const nextDropToRootActive = !canDropOnTargetRow && canDropOnRootZone;
+    if (dropTargetNoteId !== nextDropTargetNoteId || dropToRootActive !== nextDropToRootActive) {
+      dropTargetNoteId = nextDropTargetNoteId;
+      dropToRootActive = nextDropToRootActive;
+      setDragVisuals(app.querySelector(`.sub-pages-row[data-note-id="${cssEscape(draggedNoteId)}"]`), canDropOnTargetRow ? row : null, dropToRootActive);
+    }
+  });
+
+  app.addEventListener('dragleave', (event) => {
+    if (!draggedNoteId) return;
+    if (event.relatedTarget && app.contains(event.relatedTarget)) return;
+    dropTargetNoteId = null;
+    dropToRootActive = false;
+    setDragVisuals(app.querySelector(`.sub-pages-row[data-note-id="${cssEscape(draggedNoteId)}"]`), null, false);
+  });
+
+  app.addEventListener('drop', (event) => {
+    if (!draggedNoteId || busy || normalizedSearchQuery()) return;
+
+    const row = event.target.closest('.sub-pages-row[data-note-id]');
+    const rootDropZone = event.target.closest('.sub-pages-root-drop-zone');
+    const targetNoteId = row && !row.classList.contains('sub-pages-external-row') && canDropOnRow(draggedNoteId, row.dataset.noteId) ? row.dataset.noteId : null;
+    const dropToRoot = !targetNoteId && !!rootDropZone && canDropToRoot(draggedNoteId);
+    const noteId = draggedNoteId;
+
+    if (!targetNoteId && !dropToRoot) return;
+
+    event.preventDefault();
+    draggedNoteId = null;
+    dropTargetNoteId = null;
+    dropToRootActive = false;
+    clearDragVisuals();
+
+    if (targetNoteId && targetNoteId !== noteId) {
+      post('dropOnNote', { noteId, targetNoteId });
+    } else if (dropToRoot) {
+      post('dropToRoot', { noteId });
+    }
   });
 
   app.addEventListener('dragend', () => {
+    draggedNoteId = null;
+    dropTargetNoteId = null;
+    dropToRootActive = false;
     clearDragState();
   });
 
@@ -1056,6 +1157,29 @@
     }
     searchRequestSerial += 1;
     searchState = emptySearchState();
+  }
+
+  function setDragVisuals(draggedRow, targetRow, rootTarget) {
+    clearDragVisuals();
+    if (draggedRow) draggedRow.classList.add('is-dragging');
+    if (targetRow) targetRow.classList.add('is-drop-target');
+    app.querySelectorAll('.sub-pages-root-drop-zone').forEach((zone) => {
+      zone.classList.add('is-visible');
+      zone.classList.toggle('is-drop-target', !!rootTarget);
+    });
+  }
+
+  function clearDragVisuals() {
+    app.querySelectorAll('.sub-pages-row.is-dragging').forEach((row) => row.classList.remove('is-dragging'));
+    app.querySelectorAll('.sub-pages-row.is-drop-target').forEach((row) => row.classList.remove('is-drop-target'));
+    app.querySelectorAll('.sub-pages-root-drop-zone').forEach((zone) => {
+      zone.classList.remove('is-visible', 'is-drop-target');
+    });
+  }
+
+  function cssEscape(value) {
+    if (window.CSS && typeof window.CSS.escape === 'function') return window.CSS.escape(value);
+    return String(value || '').replace(/["\\]/g, '\\$&');
   }
 
   function scheduleSearch(delay) {
@@ -1301,6 +1425,7 @@
   function clearDragState() {
     if (dragSourceRow) dragSourceRow.classList.remove('is-dragging');
     dragSourceRow = null;
+    clearDragVisuals();
     if (dragStatusElement) dragStatusElement.hidden = true;
   }
 
