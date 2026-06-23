@@ -172,7 +172,7 @@ body {
   grid-template-columns: minmax(0, 1fr);
   min-height: 28px;
   min-width: 0;
-  padding: 3px 4px 3px calc(6px + var(--depth) * 18px);
+  padding: 3px 4px 3px calc(6px + var(--depth) * 12px);
   position: relative;
   width: 100%;
 }
@@ -190,7 +190,7 @@ body {
   border-left: 1px solid var(--joplin-divider-color, rgba(127, 127, 127, 0.28));
   bottom: -4px;
   content: "";
-  left: calc(var(--depth) * 18px - 3px);
+  left: calc(var(--depth) * 12px - 3px);
   position: absolute;
   top: -4px;
 }
@@ -198,7 +198,7 @@ body {
 .sub-pages-row.is-child::after {
   border-top: 1px solid var(--joplin-divider-color, rgba(127, 127, 127, 0.28));
   content: "";
-  left: calc(var(--depth) * 18px - 3px);
+  left: calc(var(--depth) * 12px - 3px);
   position: absolute;
   top: 14px;
   width: 10px;
