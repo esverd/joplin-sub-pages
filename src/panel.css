@@ -214,6 +214,14 @@ body {
   width: 100%;
 }
 
+.sub-pages-row.has-children .sub-pages-row-main {
+  gap: 2px;
+}
+
+.sub-pages-row.has-children .sub-pages-toggle {
+  min-width: 16px;
+}
+
 .sub-pages-row:hover {
   background: var(--joplin-background-color-hover3, rgba(127, 127, 127, 0.12));
 }
@@ -331,6 +339,10 @@ body {
   text-align: left;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.sub-pages-row.has-children .sub-pages-note-title {
+  padding-left: 2px;
 }
 
 .sub-pages-child-count {
