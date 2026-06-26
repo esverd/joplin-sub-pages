@@ -222,6 +222,10 @@ body {
   min-width: 16px;
 }
 
+.sub-pages-row.is-child:not(.has-children) .sub-pages-row-main {
+  gap: 2px;
+}
+
 .sub-pages-row:hover {
   background: var(--joplin-background-color-hover3, rgba(127, 127, 127, 0.12));
 }
@@ -255,6 +259,11 @@ body {
 .sub-pages-spacer {
   flex: 0 0 18px;
   height: 18px;
+}
+
+.sub-pages-row.is-child:not(.has-children) .sub-pages-spacer {
+  flex-basis: 8px;
+  width: 8px;
 }
 
 .sub-pages-button {
