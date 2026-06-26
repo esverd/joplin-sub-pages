@@ -250,7 +250,7 @@ async function main() {
     await new Promise(r => setTimeout(r, 150));
 
     const childToRoot = document.querySelector('.sub-pages-row[data-note-id="child2"]');
-    const rootDropZone = document.querySelector('.sub-pages-root-drop-zone');
+    const rootDropZone = document.querySelector('.sub-pages-list.sub-pages-root-drop-zone');
     const rootData = new DataTransfer();
     childToRoot.dispatchEvent(new DragEvent('dragstart', { bubbles: true, cancelable: true, dataTransfer: rootData }));
     rootDropZone.dispatchEvent(new DragEvent('dragover', { bubbles: true, cancelable: true, dataTransfer: rootData }));

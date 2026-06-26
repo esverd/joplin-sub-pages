@@ -155,9 +155,20 @@ body {
   background: var(--joplin-background-color-hover2, rgba(127, 127, 127, 0.08));
 }
 
+.sub-pages-list {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  max-width: 100%;
+  min-height: 0;
+  min-width: 0;
+  width: 100%;
+}
+
 .sub-pages-tree {
   display: flex;
   flex-direction: column;
+  flex: 0 0 auto;
   max-width: 100%;
   min-width: 0;
   width: 100%;
@@ -390,22 +401,22 @@ body {
 }
 
 .sub-pages-root-drop-zone {
-  border: 1px dashed transparent;
   border-radius: 4px;
-  flex: 0 0 0;
+  flex: 1 1 auto;
   min-height: 0;
-  transition: background-color 120ms ease, border-color 120ms ease, flex-basis 120ms ease, min-height 120ms ease;
+  outline: 1px dashed transparent;
+  outline-offset: -1px;
+  transition: background-color 120ms ease, min-height 120ms ease, outline-color 120ms ease;
 }
 
 .sub-pages-root-drop-zone.is-visible {
-  border-color: var(--joplin-divider-color, rgba(127, 127, 127, 0.42));
-  flex: 1 0 28px;
   min-height: 28px;
+  outline-color: var(--joplin-divider-color, rgba(127, 127, 127, 0.42));
 }
 
 .sub-pages-root-drop-zone.is-drop-target {
   background: var(--joplin-selected-color, rgba(80, 130, 210, 0.14));
-  border-color: var(--joplin-selected-color, rgba(80, 130, 210, 0.72));
+  outline-color: var(--joplin-selected-color, rgba(80, 130, 210, 0.72));
 }
 
 .sub-pages-section-heading {

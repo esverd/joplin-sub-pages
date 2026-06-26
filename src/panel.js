@@ -146,23 +146,23 @@
       const search = currentSearch();
       const visibleNodes = filteredRootNodes(search);
       const externalResults = search.active ? search.externalResults : [];
+      const showRootDropArea = !search.active && currentState.nodes.length;
 
       if (currentState.nodes.length && visibleNodes.length) {
-        const tree = element('div', { className: 'sub-pages-tree', role: 'tree' });
-        visibleNodes.forEach((node) => renderNode(node, 0, tree, search));
-        root.appendChild(tree);
-      }
-
-      if (!search.active && currentState.nodes.length) {
-        root.appendChild(element('div', {
+        const list = element('div', {
           className: [
-            'sub-pages-root-drop-zone',
-            draggedNoteId ? 'is-visible' : '',
-            dropToRootActive ? 'is-drop-target' : '',
+            'sub-pages-list',
+            showRootDropArea ? 'sub-pages-root-drop-zone' : '',
+            draggedNoteId && showRootDropArea ? 'is-visible' : '',
+            dropToRootActive && showRootDropArea ? 'is-drop-target' : '',
           ].filter(Boolean).join(' '),
           role: 'presentation',
-          ariaLabel: 'Drop here to promote to root',
-        }));
+          ariaLabel: showRootDropArea ? 'Drop on blank list space to promote to root' : null,
+        });
+        const tree = element('div', { className: 'sub-pages-tree', role: 'tree' });
+        visibleNodes.forEach((node) => renderNode(node, 0, tree, search));
+        list.appendChild(tree);
+        root.appendChild(list);
       }
 
       if (externalResults.length) {
@@ -550,6 +550,12 @@
   function canDropToRoot(noteId) {
     const node = findNodeById(currentState && currentState.nodes ? currentState.nodes : [], noteId);
     return !!(node && node.parentId);
+  }
+
+  function rootDropTargetForEventTarget(target) {
+    if (!target || !target.closest) return null;
+    if (target.closest('.sub-pages-row[data-note-id]')) return null;
+    return target.closest('.sub-pages-root-drop-zone');
   }
 
   function selectedActionNoteIds(anchorNoteId) {
@@ -961,7 +967,7 @@
     if (!draggedNoteId || busy || normalizedSearchQuery()) return;
 
     const row = event.target.closest('.sub-pages-row[data-note-id]');
-    const rootDropZone = event.target.closest('.sub-pages-root-drop-zone');
+    const rootDropZone = rootDropTargetForEventTarget(event.target);
     const canDropOnTargetRow = !!row && !row.classList.contains('sub-pages-external-row') && canDropOnRow(draggedNoteId, row.dataset.noteId);
     const canDropOnRootZone = !!rootDropZone && canDropToRoot(draggedNoteId);
 
@@ -991,7 +997,7 @@
     if (!draggedNoteId || busy || normalizedSearchQuery()) return;
 
     const row = event.target.closest('.sub-pages-row[data-note-id]');
-    const rootDropZone = event.target.closest('.sub-pages-root-drop-zone');
+    const rootDropZone = rootDropTargetForEventTarget(event.target);
     const targetNoteId = row && !row.classList.contains('sub-pages-external-row') && canDropOnRow(draggedNoteId, row.dataset.noteId) ? row.dataset.noteId : null;
     const dropToRoot = !targetNoteId && !!rootDropZone && canDropToRoot(draggedNoteId);
     const noteId = draggedNoteId;
