@@ -170,9 +170,9 @@ body {
   display: grid;
   gap: 4px;
   grid-template-columns: minmax(0, 1fr);
-  min-height: 28px;
+  min-height: 24px;
   min-width: 0;
-  padding: 3px 4px 3px calc(6px + var(--depth) * 12px);
+  padding: 1px 3px 1px calc(5px + var(--depth) * 12px);
   position: relative;
   width: 100%;
 }
@@ -188,11 +188,11 @@ body {
 
 .sub-pages-row.is-child::before {
   border-left: 1px solid var(--joplin-divider-color, rgba(127, 127, 127, 0.28));
-  bottom: -4px;
+  bottom: -2px;
   content: "";
   left: calc(var(--depth) * 12px - 3px);
   position: absolute;
-  top: -4px;
+  top: -2px;
 }
 
 .sub-pages-row.is-child::after {
@@ -200,7 +200,7 @@ body {
   content: "";
   left: calc(var(--depth) * 12px - 3px);
   position: absolute;
-  top: 14px;
+  top: 12px;
   width: 10px;
 }
 
@@ -245,8 +245,8 @@ body {
 }
 
 .sub-pages-spacer {
-  flex: 0 0 20px;
-  height: 20px;
+  flex: 0 0 19px;
+  height: 19px;
 }
 
 .sub-pages-button {
@@ -261,12 +261,12 @@ body {
   font: inherit;
   gap: 4px;
   justify-content: center;
-  min-height: 22px;
+  min-height: 20px;
   padding: 1px 5px;
 }
 
 .sub-pages-icon-button {
-  min-width: 22px;
+  min-width: 20px;
   padding-left: 0;
   padding-right: 0;
   text-align: center;
