@@ -1,4 +1,6 @@
 import joplin from 'api';
+import * as os from 'os';
+import * as path from 'path';
 import {
   MenuItemLocation,
   ModelType,
@@ -14,6 +16,7 @@ const COMMAND_MOVE_PAGE = 'subPages.movePage';
 const COMMAND_MOVE_BRANCH_TO_FOLDER = 'subPages.moveBranchToFolder';
 const COMMAND_PROMOTE_PAGE = 'subPages.promotePage';
 const COMMAND_UNLINK_PAGE = 'subPages.unlinkPage';
+const COMMAND_SAVE_NOTE_AS_MARKDOWN = 'subPages.saveNoteAsMarkdown';
 const COMMAND_REPAIR_METADATA = 'subPages.repairMetadata';
 
 const NOTE_LIST_PARITY_COMMANDS = new Set([
@@ -40,6 +43,7 @@ const CHILD_IDS_KEY = 'subPages.childIds';
 
 const DEFAULT_ROOT_TITLE = 'Untitled page';
 const DEFAULT_CHILD_TITLE = 'Untitled sub-page';
+const DEFAULT_EXPORT_TITLE = 'Untitled note';
 const NOTE_LIST_PAGE_LIMIT = 100;
 const RECENT_CHANGE_TIME_TTL = 10 * 60 * 1000;
 const SETTLED_REFRESH_DELAYS = [1500, 4000];
@@ -70,6 +74,17 @@ interface NoteSummary {
   is_todo: number;
   todo_completed: number;
   user_data: unknown;
+}
+
+interface NoteExportData {
+  id: string;
+  title: string;
+  body: string;
+}
+
+interface MarkdownExportPathSelection {
+  filePath: string;
+  overwriteHandled: boolean;
 }
 
 interface SearchExternalResult {
@@ -312,6 +327,22 @@ async function registerCommands(): Promise<void> {
   });
 
   await joplin.commands.register({
+    name: COMMAND_SAVE_NOTE_AS_MARKDOWN,
+    label: 'Save note as Markdown...',
+    iconName: 'fas fa-file-export',
+    execute: async (...args: any[]) => {
+      await runCommand(async () => {
+        const note = await resolveContextNote(args);
+        if (!note) {
+          await notify('Select a note before saving it as Markdown.');
+          return;
+        }
+        await saveNoteAsMarkdown(note.id);
+      });
+    },
+  });
+
+  await joplin.commands.register({
     name: COMMAND_REPAIR_METADATA,
     label: 'Repair Sub-Pages metadata',
     iconName: 'fas fa-wrench',
@@ -337,6 +368,8 @@ async function registerMenus(): Promise<void> {
   await joplin.views.menuItems.create('subPages.moveBranchToFolder.context', COMMAND_MOVE_BRANCH_TO_FOLDER, MenuItemLocation.NoteListContextMenu);
   await joplin.views.menuItems.create('subPages.promotePage.context', COMMAND_PROMOTE_PAGE, MenuItemLocation.NoteListContextMenu);
   await joplin.views.menuItems.create('subPages.unlinkPage.context', COMMAND_UNLINK_PAGE, MenuItemLocation.NoteListContextMenu);
+  await joplin.views.menuItems.create('subPages.saveNoteAsMarkdown.context', COMMAND_SAVE_NOTE_AS_MARKDOWN, MenuItemLocation.NoteListContextMenu);
+  await joplin.views.menuItems.create('subPages.saveNoteAsMarkdown.note', COMMAND_SAVE_NOTE_AS_MARKDOWN, MenuItemLocation.Note);
 
   await joplin.views.toolbarButtons.create('subPages.togglePanel.toolbar', COMMAND_TOGGLE_PANEL, ToolbarButtonLocation.NoteToolbar);
 }
@@ -494,6 +527,14 @@ async function handlePanelMessage(message: any): Promise<any> {
     if (name === 'copyExternalLink' && noteId) {
       await copyExternalLink(noteId);
       return { ok: true, message: 'Copied external link.' };
+    }
+
+    if (name === 'saveNoteAsMarkdown' && noteId) {
+      const savedPath = await saveNoteAsMarkdown(noteId);
+      return {
+        ok: !!savedPath,
+        message: savedPath ? `Saved Markdown to ${savedPath}.` : undefined,
+      };
     }
 
     if (name === 'createChild' && noteId) {
@@ -2217,6 +2258,125 @@ async function copyMarkdownLink(noteId: string): Promise<void> {
 
 async function copyExternalLink(noteId: string): Promise<void> {
   await joplin.clipboard.writeText(`joplin://x-callback-url/openNote?id=${encodeURIComponent(noteId)}`);
+}
+
+async function saveNoteAsMarkdown(noteId: string): Promise<string | null> {
+  const note = await getNoteExportData(noteId);
+  if (!note) {
+    await notify('The note to save could not be loaded.');
+    return null;
+  }
+
+  const selection = await chooseMarkdownExportPath(note);
+  if (!selection) return null;
+  const filePath = selection.filePath;
+
+  const fs = joplin.require('fs-extra');
+  if (!selection.overwriteHandled && await fs.pathExists(filePath)) {
+    const confirmed = await joplin.views.dialogs.showMessageBox(`"${path.basename(filePath)}" already exists. Replace it?`);
+    if (confirmed !== 0) return null;
+  }
+
+  await fs.ensureDir(path.dirname(filePath));
+  await fs.writeFile(filePath, note.body || '', 'utf8');
+  await showToast(`Saved "${displayTitleText(note.title)}" as Markdown.`);
+  return filePath;
+}
+
+async function getNoteExportData(noteId: string): Promise<NoteExportData | null> {
+  try {
+    const note = await joplin.data.get(['notes', noteId], {
+      fields: ['id', 'title', 'body'],
+    });
+    if (!note?.id) return null;
+
+    return {
+      id: String(note.id),
+      title: typeof note.title === 'string' ? note.title : '',
+      body: typeof note.body === 'string' ? note.body : '',
+    };
+  } catch (error) {
+    console.warn('Sub-Pages: unable to load note for Markdown export', noteId, error);
+    return null;
+  }
+}
+
+async function chooseMarkdownExportPath(note: NoteExportData): Promise<MarkdownExportPathSelection | null> {
+  const saveSelection = await chooseMarkdownExportPathWithSaveDialog(note);
+  if (saveSelection) return saveSelection;
+
+  const result = await joplin.views.dialogs.showOpenDialog({
+    title: 'Save note as Markdown',
+    buttonLabel: 'Save',
+    defaultPath: defaultMarkdownExportPath(note),
+    properties: ['openFile'],
+    filters: [
+      { name: 'Markdown files', extensions: ['md', 'markdown'] },
+      { name: 'All files', extensions: ['*'] },
+    ],
+  });
+
+  const selectedPath = Array.isArray(result?.filePaths) && result.filePaths.length ? String(result.filePaths[0]) : '';
+  return selectedPath ? { filePath: ensureMarkdownExtension(selectedPath), overwriteHandled: false } : null;
+}
+
+async function chooseMarkdownExportPathWithSaveDialog(note: NoteExportData): Promise<MarkdownExportPathSelection | null> {
+  const dialogs = joplin.views.dialogs as any;
+  if (typeof dialogs.showSaveDialog !== 'function') return null;
+
+  try {
+    const result = await dialogs.showSaveDialog({
+      title: 'Save note as Markdown',
+      buttonLabel: 'Save',
+      defaultPath: defaultMarkdownExportPath(note),
+      filters: [
+        { name: 'Markdown files', extensions: ['md', 'markdown'] },
+        { name: 'All files', extensions: ['*'] },
+      ],
+    });
+
+    if (result?.canceled) return null;
+    const selectedPath = typeof result === 'string' ? result : (typeof result?.filePath === 'string' ? result.filePath : '');
+    return selectedPath ? { filePath: ensureMarkdownExtension(selectedPath), overwriteHandled: true } : null;
+  } catch (error) {
+    console.warn('Sub-Pages: native save dialog failed; falling back to file picker', error);
+    return null;
+  }
+}
+
+function defaultMarkdownExportPath(note: NoteExportData): string {
+  return path.join(defaultExportDirectory(), markdownFileName(note.title));
+}
+
+function defaultExportDirectory(): string {
+  const home = os.homedir();
+  if (!home) return process.cwd();
+  return path.join(home, 'Documents');
+}
+
+function markdownFileName(title: string): string {
+  const rawTitle = title.trim() || DEFAULT_EXPORT_TITLE;
+  const sanitizedTitle = rawTitle
+    .replace(/[<>:"/\\|?*\x00-\x1F]/g, '_')
+    .replace(/\s+/g, ' ')
+    .replace(/[. ]+$/g, '')
+    .slice(0, 120)
+    .trim() || DEFAULT_EXPORT_TITLE;
+
+  return hasMarkdownExtension(sanitizedTitle) ? sanitizedTitle : `${sanitizedTitle}.md`;
+}
+
+function ensureMarkdownExtension(filePath: string): string {
+  return hasMarkdownExtension(filePath) ? filePath : `${filePath}.md`;
+}
+
+function hasMarkdownExtension(value: string): boolean {
+  const extension = path.extname(value).toLocaleLowerCase();
+  return extension === '.md' || extension === '.markdown';
+}
+
+function displayTitleText(title: string | null | undefined): string {
+  return title?.trim() || '(untitled)';
 }
 
 function escapeMarkdownLinkTitle(title: string): string {

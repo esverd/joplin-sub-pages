@@ -84,7 +84,12 @@
     Promise.resolve(api.postMessage(Object.assign({ name }, payload || {}))).catch(() => {});
   }
 
+  function isRowDragActive() {
+    return !!(dragSourceRow || draggedNoteId);
+  }
+
   function syncSelectedNote() {
+    if (isRowDragActive()) return;
     if (!currentState || selectionSyncInFlight) return;
     if (!api || typeof api.postMessage !== 'function') return;
 
@@ -108,6 +113,7 @@
   }
 
   function syncPanelState() {
+    if (isRowDragActive()) return;
     if (!currentState || stateSyncInFlight) return;
     if (!api || typeof api.postMessage !== 'function') return;
 
@@ -162,6 +168,13 @@
         const tree = element('div', { className: 'sub-pages-tree', role: 'tree' });
         visibleNodes.forEach((node) => renderNode(node, 0, tree, search));
         list.appendChild(tree);
+        if (showRootDropArea) {
+          list.appendChild(element('div', {
+            className: 'sub-pages-root-drop-target sub-pages-root-drop-zone',
+            role: 'presentation',
+            ariaLabel: 'Drop here to promote to root',
+          }));
+        }
         root.appendChild(list);
       }
 
@@ -555,7 +568,14 @@
   function rootDropTargetForEventTarget(target) {
     if (!target || !target.closest) return null;
     if (target.closest('.sub-pages-row[data-note-id]')) return null;
-    return target.closest('.sub-pages-root-drop-zone');
+    if (target.closest('.sub-pages-header, .sub-pages-search, .sub-pages-menu')) return null;
+
+    const explicitZone = target.closest('.sub-pages-root-drop-zone');
+    if (explicitZone) return explicitZone;
+
+    const shell = target.closest('.sub-pages-shell');
+    if (!shell) return null;
+    return shell.querySelector('.sub-pages-list.sub-pages-root-drop-zone');
   }
 
   function selectedActionNoteIds(anchorNoteId) {
@@ -693,6 +713,7 @@
     menu.appendChild(element('div', { className: 'sub-pages-menu-separator' }));
     menu.appendChild(menuButton('copyMarkdownLink', node, 'Copy Markdown link'));
     menu.appendChild(menuButton('copyExternalLink', node, 'Copy external link'));
+    menu.appendChild(menuButton('saveNoteAsMarkdown', node, 'Save as Markdown...'));
     menu.appendChild(menuButton('showNoteProperties', node, 'Note properties'));
     menu.appendChild(element('div', { className: 'sub-pages-menu-separator' }));
     menu.appendChild(menuButton('createChild', node, 'Create child'));
@@ -735,6 +756,7 @@
     menu.appendChild(element('div', { className: 'sub-pages-menu-separator' }));
     menu.appendChild(menuButton('copyMarkdownLink', note, 'Copy Markdown link'));
     menu.appendChild(menuButton('copyExternalLink', note, 'Copy external link'));
+    menu.appendChild(menuButton('saveNoteAsMarkdown', note, 'Save as Markdown...'));
     menu.appendChild(menuButton('showNoteProperties', note, 'Note properties'));
 
     details.appendChild(menu);
@@ -1444,6 +1466,7 @@
       if (!message) return;
 
       if (message.name === 'selection') {
+        if (isRowDragActive()) return;
         if (!currentState) return;
         currentState.selectedNoteId = message.selectedNoteId || null;
         syncPanelSelectionToSelectedNote();
@@ -1452,6 +1475,7 @@
       }
 
       if (message.name !== 'state') return;
+      if (isRowDragActive()) return;
       if (typeof message.revision === 'number') stateRevision = message.revision;
       currentState = message.state;
       statusText = '';

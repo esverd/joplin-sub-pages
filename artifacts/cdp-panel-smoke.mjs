@@ -237,6 +237,9 @@ async function main() {
   if (multiSelect.selected.length < 2 || !multiSelect.menuItems.some(item => item.includes('Move 2 pages to notebook'))) {
     throw new Error(`Multi-select branch move menu did not render: ${JSON.stringify(multiSelect)}`);
   }
+  if (!multiSelect.menuItems.includes('Save as Markdown...')) {
+    throw new Error(`Markdown save menu item did not render: ${JSON.stringify(multiSelect)}`);
+  }
 
   const dragDrop = await evalJs(`(async () => {
     window.messages.length = 0;
@@ -251,8 +254,17 @@ async function main() {
 
     const childToRoot = document.querySelector('.sub-pages-row[data-note-id="child2"]');
     const rootDropZone = document.querySelector('.sub-pages-list.sub-pages-root-drop-zone');
+    const explicitRootTarget = document.querySelector('.sub-pages-root-drop-target');
+    const tree = document.querySelector('.sub-pages-tree');
+    if (!rootDropZone || !explicitRootTarget || !tree) throw new Error('Missing root drop surface');
     const rootData = new DataTransfer();
     childToRoot.dispatchEvent(new DragEvent('dragstart', { bubbles: true, cancelable: true, dataTransfer: rootData }));
+    if (!rootDropZone.classList.contains('is-visible')) throw new Error('Root drop target did not become visible during child drag');
+    const listRect = rootDropZone.getBoundingClientRect();
+    const treeRect = tree.getBoundingClientRect();
+    const explicitRect = explicitRootTarget.getBoundingClientRect();
+    if (listRect.height <= treeRect.height + explicitRect.height + 40) throw new Error('Root drop surface did not expand across the clear list area');
+    if (explicitRect.height < 24) throw new Error('Root drop target did not expose a usable fallback hit area during child drag');
     rootDropZone.dispatchEvent(new DragEvent('dragover', { bubbles: true, cancelable: true, dataTransfer: rootData }));
     rootDropZone.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: rootData }));
     childToRoot.dispatchEvent(new DragEvent('dragend', { bubbles: true, cancelable: true, dataTransfer: rootData }));
@@ -285,7 +297,7 @@ async function main() {
 
     const rootData = new DataTransfer();
     const root = document.querySelector('.sub-pages-row[data-note-id="root2"]');
-    const rootDropZone = document.querySelector('.sub-pages-root-drop-zone');
+    const rootDropZone = document.querySelector('.sub-pages-root-drop-target');
     root.dispatchEvent(new DragEvent('dragstart', { bubbles: true, cancelable: true, dataTransfer: rootData }));
     rootDropZone.dispatchEvent(new DragEvent('dragover', { bubbles: true, cancelable: true, dataTransfer: rootData }));
     rootDropZone.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: rootData }));

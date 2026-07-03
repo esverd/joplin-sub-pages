@@ -7,4 +7,5 @@ publish/
 artifacts/*
 !artifacts/
 !artifacts/cdp-panel-smoke.mjs
+!artifacts/joplin-desktop-uat.mjs
 !artifacts/panel-harness.html

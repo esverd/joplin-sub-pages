@@ -16,6 +16,7 @@ Sub-Pages adds a notebook-scoped page tree panel to Joplin. Notes can contain ch
   - Unlink page from its parent and direct children
   - Move siblings up/down in manual sort mode
   - Repair stale metadata on demand
+  - Save a note as a local `.md` file
 - Hierarchy metadata is stored with synced Joplin note user data.
 - The panel row menu mirrors common native note-list actions, including open, tags, to-do conversion, move, duplicate, delete, copy links, note properties, and a command palette bridge, alongside Sub-Pages hierarchy actions.
 - Double-clicking a panel row opens the note in a new window.
