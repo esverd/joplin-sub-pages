@@ -1,4 +1,7 @@
 import http from 'node:http';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 
 const cdpPort = Number(process.env.JOPLIN_CDP_PORT || 18900);
 const NOTE_MODEL_TYPE = 1;
@@ -308,6 +311,16 @@ async function main() {
     record('connected to Joplin plugin API', { version: original.version?.version });
     assert(original.showSaveDialogType === 'function', 'Joplin runtime does not expose a native save dialog API.', original);
     record('verified native save dialog API is available');
+
+    const installedPluginDir = path.join(os.homedir(), '.config', 'joplin-desktop', 'cache', 'com.codex.subPages');
+    const installedPluginEntry = await Promise.any([
+      fs.readFile(path.join(installedPluginDir, 'index.js'), 'utf8'),
+      fs.readFile(path.join(installedPluginDir, 'main.js'), 'utf8'),
+    ]);
+    const installedPluginSource = installedPluginEntry;
+    assert(!installedPluginSource.includes('showOpenDialog') && !installedPluginSource.includes('openFile'), 'Installed plugin still contains the invalid open-file save fallback.');
+    assert(installedPluginSource.includes('subPages.markdownExportDialog'), 'Installed plugin is missing the Markdown export form fallback.');
+    record('verified installed Markdown export avoids open-file save fallback');
 
     const staleCleanup = await cleanupOldUatFolders();
     if (staleCleanup.deleted.length) {

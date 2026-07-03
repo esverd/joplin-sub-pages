@@ -34,6 +34,7 @@ const PLUGIN_ID = 'com.codex.subPages';
 const PANEL_ID = `${PLUGIN_ID}.panel`;
 const DIALOG_MOVE_PARENT_PREFIX = 'subPages.moveParentDialog';
 const DIALOG_MOVE_BRANCH_TO_FOLDER_PREFIX = 'subPages.moveBranchToFolderDialog';
+const DIALOG_MARKDOWN_EXPORT_PREFIX = 'subPages.markdownExportDialog';
 
 const SETTINGS_SECTION = 'subPages';
 const SETTING_PANEL_SORT_MODE = 'subPages.panelSortMode';
@@ -2303,26 +2304,14 @@ async function getNoteExportData(noteId: string): Promise<NoteExportData | null>
 
 async function chooseMarkdownExportPath(note: NoteExportData): Promise<MarkdownExportPathSelection | null> {
   const saveSelection = await chooseMarkdownExportPathWithSaveDialog(note);
-  if (saveSelection) return saveSelection;
+  if (saveSelection !== undefined) return saveSelection;
 
-  const result = await joplin.views.dialogs.showOpenDialog({
-    title: 'Save note as Markdown',
-    buttonLabel: 'Save',
-    defaultPath: defaultMarkdownExportPath(note),
-    properties: ['openFile'],
-    filters: [
-      { name: 'Markdown files', extensions: ['md', 'markdown'] },
-      { name: 'All files', extensions: ['*'] },
-    ],
-  });
-
-  const selectedPath = Array.isArray(result?.filePaths) && result.filePaths.length ? String(result.filePaths[0]) : '';
-  return selectedPath ? { filePath: ensureMarkdownExtension(selectedPath), overwriteHandled: false } : null;
+  return await chooseMarkdownExportPathWithFormDialog(note);
 }
 
-async function chooseMarkdownExportPathWithSaveDialog(note: NoteExportData): Promise<MarkdownExportPathSelection | null> {
+async function chooseMarkdownExportPathWithSaveDialog(note: NoteExportData): Promise<MarkdownExportPathSelection | null | undefined> {
   const dialogs = joplin.views.dialogs as any;
-  if (typeof dialogs.showSaveDialog !== 'function') return null;
+  if (typeof dialogs.showSaveDialog !== 'function') return undefined;
 
   try {
     const result = await dialogs.showSaveDialog({
@@ -2339,9 +2328,89 @@ async function chooseMarkdownExportPathWithSaveDialog(note: NoteExportData): Pro
     const selectedPath = typeof result === 'string' ? result : (typeof result?.filePath === 'string' ? result.filePath : '');
     return selectedPath ? { filePath: ensureMarkdownExtension(selectedPath), overwriteHandled: true } : null;
   } catch (error) {
-    console.warn('Sub-Pages: native save dialog failed; falling back to file picker', error);
+    console.warn('Sub-Pages: native save dialog failed; falling back to Markdown export form', error);
+    return undefined;
+  }
+}
+
+async function chooseMarkdownExportPathWithFormDialog(note: NoteExportData): Promise<MarkdownExportPathSelection | null> {
+  const handle = await createDialog(DIALOG_MARKDOWN_EXPORT_PREFIX);
+  await joplin.views.dialogs.setHtml(handle, `
+    <!doctype html>
+    <html>
+      <head>
+        <style>
+          html, body {
+            box-sizing: border-box;
+            color: var(--joplin-color, #222);
+            font-family: var(--joplin-font-family, sans-serif);
+            font-size: var(--joplin-font-size, 13px);
+            margin: 0;
+            min-height: 200px;
+          }
+          *, *::before, *::after { box-sizing: inherit; }
+          form { min-width: 420px; padding: 16px; }
+          p { color: var(--joplin-color-faded, #666); font-size: 12px; margin: 0 0 16px; }
+          label { display: block; font-weight: 600; margin-bottom: 14px; }
+          input {
+            background: var(--joplin-background-color, #fff);
+            border: 1px solid var(--joplin-divider-color, #c7c7c7);
+            border-radius: 4px;
+            color: var(--joplin-color, #222);
+            display: block;
+            font: inherit;
+            font-weight: normal;
+            margin-top: 8px;
+            padding: 6px 8px;
+            width: 100%;
+          }
+        </style>
+      </head>
+      <body>
+        <form name="markdownExport">
+          <p>Choose a folder and file name for the Markdown export.</p>
+          <label>
+            Folder
+            <input name="directory" type="text" value="${escapeHtml(defaultExportDirectory())}" />
+          </label>
+          <label>
+            File name
+            <input name="fileName" type="text" value="${escapeHtml(markdownFileName(note.title))}" />
+          </label>
+        </form>
+      </body>
+    </html>
+  `);
+  await joplin.views.dialogs.setButtons(handle, [
+    { id: 'ok', title: 'Save' },
+    { id: 'cancel', title: 'Cancel' },
+  ]);
+  await joplin.views.dialogs.setFitToContent(handle, false);
+
+  const result = await joplin.views.dialogs.open(handle);
+  if (result.id !== 'ok') return null;
+
+  const formData = result.formData?.markdownExport;
+  const directory = typeof formData?.directory === 'string' ? formData.directory.trim() : '';
+  const fileName = typeof formData?.fileName === 'string' ? formData.fileName.trim() : '';
+  const filePath = markdownExportPathFromForm(directory, fileName);
+  if (!filePath) {
+    await notify('Enter both a folder and file name to save Markdown.');
     return null;
   }
+
+  return { filePath, overwriteHandled: false };
+}
+
+function markdownExportPathFromForm(directory: string, fileName: string): string | null {
+  const trimmedFileName = fileName.trim();
+  if (!trimmedFileName) return null;
+
+  const selectedPath = path.isAbsolute(trimmedFileName)
+    ? trimmedFileName
+    : (directory.trim() ? path.join(directory.trim(), trimmedFileName) : '');
+
+  return selectedPath ? ensureMarkdownExtension(selectedPath) : null;
 }
 
 function defaultMarkdownExportPath(note: NoteExportData): string {
@@ -2356,14 +2425,23 @@ function defaultExportDirectory(): string {
 
 function markdownFileName(title: string): string {
   const rawTitle = title.trim() || DEFAULT_EXPORT_TITLE;
-  const sanitizedTitle = rawTitle
+  let sanitizedTitle = rawTitle
     .replace(/[<>:"/\\|?*\x00-\x1F]/g, '_')
     .replace(/\s+/g, ' ')
     .replace(/[. ]+$/g, '')
     .slice(0, 120)
     .trim() || DEFAULT_EXPORT_TITLE;
 
+  if (isReservedWindowsFileName(sanitizedTitle)) {
+    sanitizedTitle = `_${sanitizedTitle}`;
+  }
+
   return hasMarkdownExtension(sanitizedTitle) ? sanitizedTitle : `${sanitizedTitle}.md`;
+}
+
+function isReservedWindowsFileName(fileName: string): boolean {
+  const baseName = fileName.split('.')[0];
+  return /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i.test(baseName);
 }
 
 function ensureMarkdownExtension(filePath: string): string {
