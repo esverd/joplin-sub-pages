@@ -5,6 +5,7 @@
   "scripts": {
     "dist": "webpack --env joplin-plugin-config=buildMain && webpack --env joplin-plugin-config=createArchive",
     "test": "npm run typecheck",
+    "test:unit": "npm run typecheck",
     "test:panel": "node artifacts/cdp-panel-smoke.mjs",
     "test:uat": "node artifacts/joplin-desktop-uat.mjs",
     "typecheck": "tsc --noEmit",

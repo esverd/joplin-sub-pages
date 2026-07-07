@@ -344,7 +344,30 @@ async function main() {
     return { first, second, openAfterEscape: document.querySelector('.sub-pages-row-menu[open]') !== null };
   })()`);
 
-  console.log(JSON.stringify({ responsive, search, noResults, bodySearch, notebookScopeSearch, dragPayloads, multiSelect, confirmUnlink, dragDrop, invalidDragDrop, menuKeys }, null, 2));
+  const treeKeys = await evalJs(`(async () => {
+    const noteId = () => document.activeElement?.closest?.('.sub-pages-row[data-note-id]')?.dataset.noteId || null;
+    const parentTitle = document.querySelector('.sub-pages-row[data-note-id="parent1"] .sub-pages-note-title');
+    parentTitle.focus();
+    parentTitle.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+    const afterDown = noteId();
+    document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { key: 'End', bubbles: true }));
+    const afterEnd = noteId();
+    document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { key: 'Home', bubbles: true }));
+    const afterHome = noteId();
+    document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true }));
+    await new Promise(requestAnimationFrame);
+    const collapsed = document.querySelector('.sub-pages-row[data-note-id="parent1"]')?.getAttribute('aria-expanded') === 'false';
+    document.querySelector('.sub-pages-row[data-note-id="parent1"] .sub-pages-note-title')
+      .dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+    await new Promise(requestAnimationFrame);
+    const expanded = document.querySelector('.sub-pages-row[data-note-id="parent1"]')?.getAttribute('aria-expanded') === 'true';
+    return { afterDown, afterEnd, afterHome, collapsed, expanded };
+  })()`);
+  if (treeKeys.afterDown !== 'child1' || treeKeys.afterEnd !== 'root3' || treeKeys.afterHome !== 'parent1' || !treeKeys.collapsed || !treeKeys.expanded) {
+    throw new Error(`Tree keyboard navigation failed: ${JSON.stringify(treeKeys)}`);
+  }
+
+  console.log(JSON.stringify({ responsive, search, noResults, bodySearch, notebookScopeSearch, dragPayloads, multiSelect, confirmUnlink, dragDrop, invalidDragDrop, menuKeys, treeKeys }, null, 2));
   cdp.close();
 }
 

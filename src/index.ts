@@ -961,8 +961,7 @@ async function reconcilePendingNativeDragMoves(changedNoteId?: string): Promise<
 
     pendingNativeDragMoves.delete(rootId);
     if (pending.oldParentId) {
-      await removeChildFromParent(pending.oldParentId, rootId);
-      await clearParentId(rootId);
+      await setPageParentLink(rootId, null);
     }
 
     for (const noteId of pending.noteIds) markNoteRecentlyChanged(noteId);
@@ -1250,12 +1249,7 @@ async function attachPageToParent(child: NoteSummary, parent: NoteSummary): Prom
     return false;
   }
 
-  if (childMeta.parentId && childMeta.parentId !== parent.id) {
-    await removeChildFromParent(childMeta.parentId, child.id);
-  }
-
-  await setParentId(child.id, parent.id);
-  await appendChildId(parent.id, child.id);
+  await setPageParentLink(child.id, parent.id);
   return true;
 }
 
@@ -1312,7 +1306,7 @@ async function movePageWithDialog(noteId: string): Promise<void> {
             min-height: 180px;
           }
           *, *::before, *::after { box-sizing: inherit; }
-          form { min-width: 360px; padding: 16px; }
+          form { min-width: 0; padding: 16px; width: min(360px, calc(100vw - 32px)); }
           p { margin: 0 0 12px; }
           .path { color: var(--joplin-color-faded, #666); font-size: 12px; margin-bottom: 16px; }
           label { display: block; font-weight: 600; }
@@ -1403,7 +1397,7 @@ async function moveBranchesToFolder(noteIds: string[]): Promise<void> {
             min-height: 180px;
           }
           *, *::before, *::after { box-sizing: inherit; }
-          form { min-width: 380px; padding: 16px; }
+          form { min-width: 0; padding: 16px; width: min(380px, calc(100vw - 32px)); }
           p { margin: 0 0 12px; }
           .detail { color: var(--joplin-color-faded, #666); font-size: 12px; margin-bottom: 16px; }
           label { display: block; font-weight: 600; }
@@ -1464,11 +1458,7 @@ async function moveBranchesToFolder(noteIds: string[]): Promise<void> {
   }
 
   for (const branchRootId of branchRootsToDetach) {
-    const rootMeta = await getMeta(branchRootId);
-    if (rootMeta.parentId) {
-      await removeChildFromParent(rootMeta.parentId, branchRootId);
-      await clearParentId(branchRootId);
-    }
+    await setPageParentLink(branchRootId, null);
   }
 
   for (const movingNoteId of movingNoteIds) {
@@ -1555,8 +1545,7 @@ async function promotePageToRoot(noteId: string): Promise<void> {
     return;
   }
 
-  await removeChildFromParent(meta.parentId, note.id);
-  await clearParentId(note.id);
+  await setPageParentLink(note.id, null);
   await showToast(`Promoted "${displayTitle(note)}" to the Sub-Pages root.`);
 }
 
@@ -1576,8 +1565,7 @@ async function unlinkPageFromHierarchy(noteId: string): Promise<void> {
   }
 
   if (meta.parentId) {
-    await removeChildFromParent(meta.parentId, note.id);
-    await clearParentId(note.id);
+    await setPageParentLink(note.id, null);
   }
 
   if (directChildIds.length) {
@@ -1585,7 +1573,7 @@ async function unlinkPageFromHierarchy(noteId: string): Promise<void> {
     for (const childId of directChildIds) {
       const childMeta = await getMeta(childId);
       if (childMeta.parentId === note.id) {
-        await clearParentId(childId);
+        await setPageParentLink(childId, null);
       }
     }
   }
@@ -2170,6 +2158,68 @@ async function removeChildFromParent(parentId: string, childId: string): Promise
   await setChildIds(parentId, childIds.filter((id) => id !== childId));
 }
 
+async function setPageParentLink(noteId: string, nextParentId: string | null): Promise<void> {
+  const previousParentId = await getParentId(noteId);
+
+  if (previousParentId === nextParentId) {
+    if (nextParentId) await appendChildId(nextParentId, noteId);
+    return;
+  }
+
+  try {
+    if (nextParentId) {
+      await setParentId(noteId, nextParentId);
+      await appendChildId(nextParentId, noteId);
+    } else {
+      await clearParentId(noteId);
+    }
+
+    if (previousParentId && previousParentId !== nextParentId) {
+      await removeChildFromParent(previousParentId, noteId);
+    }
+
+    if (!(await parentLinkConsistent(noteId, previousParentId, nextParentId))) {
+      throw new Error('Sub-Pages metadata did not settle into a consistent parent link.');
+    }
+  } catch (error) {
+    await restorePageParentLink(noteId, previousParentId, nextParentId);
+    throw error;
+  }
+}
+
+async function parentLinkConsistent(noteId: string, previousParentId: string | null, nextParentId: string | null): Promise<boolean> {
+  if (await getParentId(noteId) !== nextParentId) return false;
+
+  if (nextParentId) {
+    const nextChildIds = await getChildIds(nextParentId);
+    if (!nextChildIds.includes(noteId)) return false;
+  }
+
+  if (previousParentId && previousParentId !== nextParentId) {
+    const previousChildIds = await getChildIds(previousParentId);
+    if (previousChildIds.includes(noteId)) return false;
+  }
+
+  return true;
+}
+
+async function restorePageParentLink(noteId: string, previousParentId: string | null, attemptedParentId: string | null): Promise<void> {
+  try {
+    if (attemptedParentId && attemptedParentId !== previousParentId) {
+      await removeChildFromParent(attemptedParentId, noteId);
+    }
+
+    if (previousParentId) {
+      await setParentId(noteId, previousParentId);
+      await appendChildId(previousParentId, noteId);
+    } else {
+      await clearParentId(noteId);
+    }
+  } catch (rollbackError) {
+    console.warn('Sub-Pages: unable to roll back hierarchy metadata change', noteId, rollbackError);
+  }
+}
+
 async function userDataGet<T>(noteId: string, key: string, fallback: T): Promise<T> {
   const value = await userDataRaw<T>(noteId, key);
   return value === undefined || value === null ? fallback : value;
@@ -2283,8 +2333,10 @@ async function runNoteListParityCommand(commandName: string, noteIds: string[]):
   } catch (primaryError) {
     try {
       await joplin.commands.execute(commandName, fallbackArg);
-    } catch {
-      throw primaryError;
+    } catch (fallbackError) {
+      const primaryMessage = primaryError instanceof Error ? primaryError.message : String(primaryError);
+      const fallbackMessage = fallbackError instanceof Error ? fallbackError.message : String(fallbackError);
+      throw new Error(`Joplin command "${commandName}" failed or is unavailable. ${fallbackMessage || primaryMessage}`);
     }
   }
 }
@@ -2405,7 +2457,7 @@ async function chooseMarkdownExportPathWithFormDialog(note: NoteExportData): Pro
             min-height: 200px;
           }
           *, *::before, *::after { box-sizing: inherit; }
-          form { min-width: 420px; padding: 16px; }
+          form { min-width: 0; padding: 16px; width: min(420px, calc(100vw - 32px)); }
           p { color: var(--joplin-color-faded, #666); font-size: 12px; margin: 0 0 16px; }
           label { display: block; font-weight: 600; margin-bottom: 14px; }
           input {

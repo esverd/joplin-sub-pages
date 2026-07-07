@@ -13,6 +13,12 @@ This plan captures the deep investigation of the Joplin Sub-Pages plugin and tra
 - Fixed: Markdown export now shows explicit filesystem save failures.
 - Added: npm scripts for typecheck, panel smoke, and live Joplin UAT surfaces.
 - Added: panel smoke coverage for host-confirmed unlink and live UAT coverage for stale child-order repair counts.
+- Fixed: parent-link metadata changes now use a shared consistency check with best-effort rollback.
+- Fixed: native drag and branch-move root detach paths now use the shared parent-link mutation helper.
+- Fixed: panel tree rows now support keyboard up/down/home/end navigation plus left/right collapse and parent/child movement.
+- Fixed: Joplin command delegation failures now report clearer command-specific messages.
+- Fixed: move/export dialogs now use responsive form widths.
+- Added: panel smoke coverage for tree keyboard navigation.
 
 ## Current Validation Baseline
 

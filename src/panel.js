@@ -1124,6 +1124,8 @@
   });
 
   app.addEventListener('keydown', (event) => {
+    if (handleTreeNavigationKeydown(event)) return;
+
     const trigger = event.target.closest('.sub-pages-menu-trigger');
     if (trigger) {
       const rowMenu = trigger.closest('.sub-pages-row-menu');
@@ -1155,6 +1157,106 @@
   function isTextInputTarget(target) {
     if (!target || !target.closest) return false;
     return !!target.closest('input, textarea, select, [contenteditable="true"]');
+  }
+
+  function handleTreeNavigationKeydown(event) {
+    if (isTextInputTarget(event.target)) return false;
+    if (event.target.closest('.sub-pages-menu, .sub-pages-menu-trigger')) return false;
+
+    const row = event.target.closest('.sub-pages-row[data-note-id]');
+    if (!row) return false;
+
+    const rows = visibleTreeRows();
+    const index = rows.indexOf(row);
+    if (index < 0) return false;
+
+    if (event.key === 'ArrowDown') {
+      event.preventDefault();
+      focusRowTitle(rows[Math.min(index + 1, rows.length - 1)]);
+      return true;
+    }
+
+    if (event.key === 'ArrowUp') {
+      event.preventDefault();
+      focusRowTitle(rows[Math.max(index - 1, 0)]);
+      return true;
+    }
+
+    if (event.key === 'Home') {
+      event.preventDefault();
+      focusRowTitle(rows[0]);
+      return true;
+    }
+
+    if (event.key === 'End') {
+      event.preventDefault();
+      focusRowTitle(rows[rows.length - 1]);
+      return true;
+    }
+
+    if (event.key === 'ArrowRight') {
+      event.preventDefault();
+      expandOrFocusChild(row);
+      return true;
+    }
+
+    if (event.key === 'ArrowLeft') {
+      event.preventDefault();
+      collapseOrFocusParent(row);
+      return true;
+    }
+
+    return false;
+  }
+
+  function visibleTreeRows() {
+    return [...app.querySelectorAll('.sub-pages-row[data-note-id]')];
+  }
+
+  function focusRowTitle(row) {
+    const title = row && row.querySelector('.sub-pages-note-title');
+    if (title) title.focus();
+  }
+
+  function focusRowByNoteId(noteId) {
+    if (!noteId) return;
+    window.requestAnimationFrame(() => {
+      focusRowTitle(app.querySelector(`.sub-pages-row[data-note-id="${cssEscape(noteId)}"]`));
+    });
+  }
+
+  function expandOrFocusChild(row) {
+    const noteId = row.dataset.noteId;
+    if (!noteId) return;
+
+    if (collapsedIds.has(noteId)) {
+      collapsedIds.delete(noteId);
+      render();
+      focusRowByNoteId(noteId);
+      return;
+    }
+
+    const rows = visibleTreeRows();
+    const index = rows.indexOf(row);
+    const next = rows[index + 1];
+    if (next && Number(next.getAttribute('aria-level') || '1') > Number(row.getAttribute('aria-level') || '1')) {
+      focusRowTitle(next);
+    }
+  }
+
+  function collapseOrFocusParent(row) {
+    const noteId = row.dataset.noteId;
+    if (!noteId) return;
+
+    if (row.getAttribute('aria-expanded') === 'true') {
+      collapsedIds.add(noteId);
+      render();
+      focusRowByNoteId(noteId);
+      return;
+    }
+
+    const parentId = treeParentMap().get(noteId);
+    if (parentId) focusRowByNoteId(parentId);
   }
 
   document.addEventListener('keydown', (event) => {
