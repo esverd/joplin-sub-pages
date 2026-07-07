@@ -371,6 +371,19 @@ async function main() {
     assert(nodeParentId(state, childOne) === parentA && nodeParentId(state, childTwo) === parentA, 'Child creation did not link both notes under Parent A.', state);
     record('created roots and children through panel actions', { parentA, parentB, childOne, childTwo });
 
+    await pluginEval(`
+      await joplin.data.userDataSet(${NOTE_MODEL_TYPE}, arg.parentId, '${CHILD_IDS_KEY}', [arg.childOne]);
+      return true;
+    `, { parentId: parentA, childOne });
+    state = await waitForState('repair-needed stale child order metadata', current => current.repairCount > 0);
+    assert(state.repairCount > 0, 'Stale child order metadata was not counted as repairable.', state);
+    await pluginEval(`
+      await joplin.data.userDataSet(${NOTE_MODEL_TYPE}, arg.parentId, '${CHILD_IDS_KEY}', [arg.childOne, arg.childTwo]);
+      return true;
+    `, { parentId: parentA, childOne, childTwo });
+    state = await waitForState('restored child order metadata', current => current.repairCount === 0);
+    record('verified stale child order metadata contributes to repair count');
+
     const menuItems = await panelEval(`
       const row = document.querySelector(\`.sub-pages-row[data-note-id="\${arg.noteId}"]\`);
       const menu = row?.querySelector('.sub-pages-row-menu');

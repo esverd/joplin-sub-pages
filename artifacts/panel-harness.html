@@ -81,6 +81,9 @@
         if (message.name === 'selectedNoteState') {
           return { ok: true, selectedNoteId: window.mockState.selectedNoteId };
         }
+        if (message.name === 'confirm') {
+          return { ok: true, confirmed: true };
+        }
         if (message.name === 'search') {
           const query = String(message.query || '').trim().toLocaleLowerCase();
           const scope = message.scope === 'notebook' ? 'notebook' : 'all';

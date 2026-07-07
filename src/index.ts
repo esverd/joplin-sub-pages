@@ -50,6 +50,7 @@ const RECENT_CHANGE_TIME_TTL = 10 * 60 * 1000;
 const SETTLED_REFRESH_DELAYS = [1500, 4000];
 const NATIVE_DRAG_MOVE_TTL = 2 * 60 * 1000;
 const NATIVE_DRAG_RECONCILE_DELAYS = [400, 1200, 3000, 7000, 12000];
+const MAX_PANEL_SEARCH_CACHE_ENTRIES = 50;
 
 type PanelSortMode = 'recentGroups' | 'manual' | 'title';
 type SearchScope = 'all' | 'notebook';
@@ -602,6 +603,14 @@ async function handlePanelMessage(message: any): Promise<any> {
       return panelStateResponse(count ? `Repaired ${count} metadata item${count === 1 ? '' : 's'}.` : 'No repairs were needed.');
     }
 
+    if (name === 'confirm') {
+      const prompt = typeof message?.message === 'string' && message.message.trim()
+        ? message.message.trim()
+        : 'Continue?';
+      const confirmed = await joplin.views.dialogs.showMessageBox(prompt);
+      return { ok: true, confirmed: confirmed === 0 };
+    }
+
     return { ok: false, message: 'Unsupported Sub-Pages panel action.' };
   } catch (error) {
     const messageText = error instanceof Error ? error.message : String(error);
@@ -690,7 +699,7 @@ async function panelSearchResponse(query: string, scope: SearchScope): Promise<a
       noteIds,
       externalResults,
     };
-    panelSearchCache.set(cacheKey, response);
+    setPanelSearchCache(cacheKey, response);
     return response;
   } catch (error) {
     console.warn('Sub-Pages: Joplin search failed', error);
@@ -702,6 +711,17 @@ async function panelSearchResponse(query: string, scope: SearchScope): Promise<a
       externalResults: [],
       message: 'Search failed. Try Refresh Sub-Pages panel or restart Joplin.',
     };
+  }
+}
+
+function setPanelSearchCache(cacheKey: string, response: any): void {
+  if (panelSearchCache.has(cacheKey)) panelSearchCache.delete(cacheKey);
+  panelSearchCache.set(cacheKey, response);
+
+  while (panelSearchCache.size > MAX_PANEL_SEARCH_CACHE_ENTRIES) {
+    const oldestKey = panelSearchCache.keys().next().value;
+    if (oldestKey === undefined) break;
+    panelSearchCache.delete(oldestKey);
   }
 }
 
@@ -1020,6 +1040,7 @@ async function buildTree(notes: NoteSummary[], notebookId: string, sortMode: Pan
   const metaMap = await buildMetaMap(notes);
   const metadataItemCount = metadataItemCountFor(metaMap);
   const externalParentReasons = await externalParentRepairReasons(notes, notebookId, noteMap, metaMap);
+  const repairOperations = repairOperationsForNotes(notes, noteMap, metaMap, externalParentReasons);
   const parentByNoteId = new Map<string, string | null>();
   const repairReasons = new Map<string, string>();
 
@@ -1067,7 +1088,7 @@ async function buildTree(notes: NoteSummary[], notebookId: string, sortMode: Pan
     const childNotes = childrenByParent.get(note.id) ?? [];
     const children = childNotes.map(buildNode);
     const updatedTime = noteTime(note);
-    const effectiveTime = children.reduce((max, child) => Math.max(max, child.updatedTime), updatedTime);
+    const effectiveTime = children.reduce((max, child) => Math.max(max, child.effectiveTime), updatedTime);
     return {
       id: note.id,
       title: displayTitle(note),
@@ -1089,7 +1110,7 @@ async function buildTree(notes: NoteSummary[], notebookId: string, sortMode: Pan
 
   return {
     roots: rootNodes,
-    repairCount: repairReasons.size,
+    repairCount: repairOperations.length,
     metadataItemCount,
   };
 }
@@ -1423,7 +1444,26 @@ async function moveBranchesToFolder(noteIds: string[]): Promise<void> {
   const folderId = result.formData?.moveBranch?.folderId;
   if (!folderId || typeof folderId !== 'string') return;
 
+  const branchRootsToDetach: string[] = [];
   for (const branchRootId of branchInfo.branchRootIds) {
+    const root = await getNote(branchRootId);
+    if (root && root.parent_id !== folderId) branchRootsToDetach.push(branchRootId);
+  }
+
+  const movingNoteIds: string[] = [];
+  for (const movingNoteId of branchInfo.noteIds) {
+    const movingNote = await getNote(movingNoteId);
+    if (movingNote && movingNote.parent_id !== folderId) movingNoteIds.push(movingNoteId);
+  }
+
+  if (!branchRootsToDetach.length && !movingNoteIds.length) {
+    await showToast(branchInfo.branchRootIds.length === 1
+      ? 'That page is already in the selected notebook.'
+      : 'Those pages are already in the selected notebook.');
+    return;
+  }
+
+  for (const branchRootId of branchRootsToDetach) {
     const rootMeta = await getMeta(branchRootId);
     if (rootMeta.parentId) {
       await removeChildFromParent(rootMeta.parentId, branchRootId);
@@ -1431,14 +1471,14 @@ async function moveBranchesToFolder(noteIds: string[]): Promise<void> {
     }
   }
 
-  for (const movingNoteId of branchInfo.noteIds) {
+  for (const movingNoteId of movingNoteIds) {
     await joplin.data.put(['notes', movingNoteId], null, {
       parent_id: folderId,
     });
     markNoteRecentlyChanged(movingNoteId);
   }
 
-  await showToast(`Moved ${branchInfo.noteIds.length} page${branchInfo.noteIds.length === 1 ? '' : 's'} to notebook.`);
+  await showToast(`Moved ${movingNoteIds.length} page${movingNoteIds.length === 1 ? '' : 's'} to notebook.`);
 }
 
 async function branchMoveInfo(selectedNoteIds: string[]): Promise<{ branchRootIds: string[]; branchRootTitles: string[]; noteIds: string[] }> {
@@ -1630,6 +1670,15 @@ async function repairOperationsForCurrentNotebook(): Promise<RepairOperation[]> 
   const noteMap = toNoteMap(notes);
   const metaMap = await buildMetaMap(notes);
   const externalReasons = await externalParentRepairReasons(notes, folder.id, noteMap, metaMap);
+  return repairOperationsForNotes(notes, noteMap, metaMap, externalReasons);
+}
+
+function repairOperationsForNotes(
+  notes: NoteSummary[],
+  noteMap: Map<string, NoteSummary>,
+  metaMap: Map<string, HierarchyMeta>,
+  externalReasons: Map<string, string>
+): RepairOperation[] {
   const effectiveParentIds = new Map<string, string | null>();
   const operations: RepairOperation[] = [];
 
@@ -2278,10 +2327,17 @@ async function saveNoteAsMarkdown(noteId: string): Promise<string | null> {
     if (confirmed !== 0) return null;
   }
 
-  await fs.ensureDir(path.dirname(filePath));
-  await fs.writeFile(filePath, note.body || '', 'utf8');
-  await showToast(`Saved "${displayTitleText(note.title)}" as Markdown.`);
-  return filePath;
+  try {
+    await fs.ensureDir(path.dirname(filePath));
+    await fs.writeFile(filePath, note.body || '', 'utf8');
+    await showToast(`Saved "${displayTitleText(note.title)}" as Markdown.`);
+    return filePath;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn('Sub-Pages: unable to save Markdown export', filePath, error);
+    await notify(`Could not save Markdown file: ${message}`);
+    return null;
+  }
 }
 
 async function getNoteExportData(noteId: string): Promise<NoteExportData | null> {

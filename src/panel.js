@@ -21,6 +21,8 @@
   let dropTargetNoteId = null;
   let dropToRootActive = false;
   const searchDebounceMs = 380;
+  const selectionPollMs = 1500;
+  const statePollMs = 1000;
   const joplinNoteDragType = 'text/x-jop-note-ids';
 
   const icons = {
@@ -89,6 +91,7 @@
   }
 
   function syncSelectedNote() {
+    if (document.hidden) return;
     if (isRowDragActive()) return;
     if (!currentState || selectionSyncInFlight) return;
     if (!api || typeof api.postMessage !== 'function') return;
@@ -113,6 +116,7 @@
   }
 
   function syncPanelState() {
+    if (document.hidden) return;
     if (isRowDragActive()) return;
     if (!currentState || stateSyncInFlight) return;
     if (!api || typeof api.postMessage !== 'function') return;
@@ -929,7 +933,16 @@
 
     if (busy && action !== 'toggle') return;
 
-    if (action === 'unlink' && !window.confirm('Unlink this page from its Sub-Pages hierarchy?')) return;
+    if (action === 'unlink') {
+      closeOpenMenus();
+      post('confirm', { message: 'Unlink this page from its Sub-Pages hierarchy?' })
+        .then((response) => {
+          if (response && response.confirmed) {
+            post(action, noteId ? { noteId, noteIds: selectedActionNoteIds(noteId) } : {});
+          }
+        });
+      return;
+    }
 
     closeOpenMenus();
     post(action, noteId ? { noteId, noteIds: selectedActionNoteIds(noteId) } : {});
@@ -1078,6 +1091,12 @@
 
   window.addEventListener('blur', () => {
     closeOpenMenus();
+  });
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) return;
+    syncSelectedNote();
+    syncPanelState();
   });
 
   window.addEventListener('keydown', (event) => {
@@ -1494,8 +1513,8 @@
     if (!currentState) setStatus('Still loading. The plugin is waiting for note data from Joplin.');
   }, 5000);
 
-  window.setInterval(syncSelectedNote, 1000);
-  window.setInterval(syncPanelState, 500);
+  window.setInterval(syncSelectedNote, selectionPollMs);
+  window.setInterval(syncPanelState, statePollMs);
 
   post('ready');
 }());

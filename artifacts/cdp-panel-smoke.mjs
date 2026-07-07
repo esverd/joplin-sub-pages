@@ -241,6 +241,27 @@ async function main() {
     throw new Error(`Markdown save menu item did not render: ${JSON.stringify(multiSelect)}`);
   }
 
+  const confirmUnlink = await evalJs(`(async () => {
+    window.messages = [];
+    const row = document.querySelector('.sub-pages-row[data-note-id="child1"]');
+    const unlinkButton = [...row.querySelectorAll('.sub-pages-menu-item')]
+      .find(item => item.textContent.trim() === 'Unlink');
+    if (!unlinkButton) throw new Error('Missing unlink menu item');
+    unlinkButton.click();
+    await new Promise(r => setTimeout(r, 120));
+    return window.messages.map(message => ({
+      name: message.name,
+      message: message.message,
+      noteId: message.noteId,
+    }));
+  })()`);
+  if (!confirmUnlink.some(message => message.name === 'confirm' && message.message.includes('Unlink this page'))) {
+    throw new Error(`Unlink did not ask the host for confirmation: ${JSON.stringify(confirmUnlink)}`);
+  }
+  if (!confirmUnlink.some(message => message.name === 'unlink' && message.noteId === 'child1')) {
+    throw new Error(`Confirmed unlink did not send the unlink action: ${JSON.stringify(confirmUnlink)}`);
+  }
+
   const dragDrop = await evalJs(`(async () => {
     window.messages.length = 0;
     const data = new DataTransfer();
@@ -323,7 +344,7 @@ async function main() {
     return { first, second, openAfterEscape: document.querySelector('.sub-pages-row-menu[open]') !== null };
   })()`);
 
-  console.log(JSON.stringify({ responsive, search, noResults, bodySearch, notebookScopeSearch, dragPayloads, multiSelect, dragDrop, invalidDragDrop, menuKeys }, null, 2));
+  console.log(JSON.stringify({ responsive, search, noResults, bodySearch, notebookScopeSearch, dragPayloads, multiSelect, confirmUnlink, dragDrop, invalidDragDrop, menuKeys }, null, 2));
   cdp.close();
 }
 
