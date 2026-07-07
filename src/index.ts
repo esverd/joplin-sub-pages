@@ -51,6 +51,7 @@ const SETTLED_REFRESH_DELAYS = [1500, 4000];
 const NATIVE_DRAG_MOVE_TTL = 2 * 60 * 1000;
 const NATIVE_DRAG_RECONCILE_DELAYS = [400, 1200, 3000, 7000, 12000];
 const MAX_PANEL_SEARCH_CACHE_ENTRIES = 50;
+const MAX_EXTERNAL_SEARCH_RESULTS = 50;
 
 type PanelSortMode = 'recentGroups' | 'manual' | 'title';
 type SearchScope = 'all' | 'notebook';
@@ -680,6 +681,7 @@ async function panelSearchResponse(query: string, scope: SearchScope): Promise<a
     const externalResults: SearchExternalResult[] = [];
     const folderTitleCache = new Map<string, string>();
     const seenNoteIds = new Set<string>();
+    let omittedExternalResultCount = 0;
 
     for (const note of searchResults) {
       if (seenNoteIds.has(note.id)) continue;
@@ -688,7 +690,11 @@ async function panelSearchResponse(query: string, scope: SearchScope): Promise<a
       if (notebookNoteIds.has(note.id)) {
         noteIds.push(note.id);
       } else if (scope === 'all') {
-        externalResults.push(await toExternalSearchResult(note, folderTitleCache));
+        if (externalResults.length < MAX_EXTERNAL_SEARCH_RESULTS) {
+          externalResults.push(await toExternalSearchResult(note, folderTitleCache));
+        } else {
+          omittedExternalResultCount += 1;
+        }
       }
     }
 
@@ -698,6 +704,9 @@ async function panelSearchResponse(query: string, scope: SearchScope): Promise<a
       scope,
       noteIds,
       externalResults,
+      message: omittedExternalResultCount
+        ? `Showing first ${MAX_EXTERNAL_SEARCH_RESULTS} external notebook matches. Narrow the search to see more.`
+        : undefined,
     };
     setPanelSearchCache(cacheKey, response);
     return response;
@@ -838,6 +847,7 @@ async function postSelectedNoteState(selectedNoteIdOverride?: string | null): Pr
 async function refreshPanel(force = false): Promise<void> {
   if (!panelHandle) return;
   if (!panelReady) return;
+  if (!force && !(await panelVisible())) return;
 
   const state = await buildPanelState();
   joplin.views.panels.postMessage(panelHandle, {
@@ -949,6 +959,7 @@ async function reconcilePendingNativeDragMoves(changedNoteId?: string): Promise<
 
   for (const [rootId, pending] of [...pendingNativeDragMoves.entries()]) {
     if (now - pending.createdAt > NATIVE_DRAG_MOVE_TTL) {
+      console.warn('Sub-Pages: native drag move expired before notebook change was observed', rootId);
       pendingNativeDragMoves.delete(rootId);
       continue;
     }
@@ -2204,11 +2215,15 @@ async function parentLinkConsistent(noteId: string, previousParentId: string | n
 }
 
 async function restorePageParentLink(noteId: string, previousParentId: string | null, attemptedParentId: string | null): Promise<void> {
-  try {
-    if (attemptedParentId && attemptedParentId !== previousParentId) {
+  if (attemptedParentId && attemptedParentId !== previousParentId) {
+    try {
       await removeChildFromParent(attemptedParentId, noteId);
+    } catch (rollbackError) {
+      console.warn('Sub-Pages: unable to remove attempted parent link during rollback', noteId, rollbackError);
     }
+  }
 
+  try {
     if (previousParentId) {
       await setParentId(noteId, previousParentId);
       await appendChildId(previousParentId, noteId);

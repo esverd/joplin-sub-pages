@@ -19,6 +19,10 @@ This plan captures the deep investigation of the Joplin Sub-Pages plugin and tra
 - Fixed: Joplin command delegation failures now report clearer command-specific messages.
 - Fixed: move/export dialogs now use responsive form widths.
 - Added: panel smoke coverage for tree keyboard navigation.
+- Fixed: hidden panels are skipped by scheduled backend refreshes unless refresh is forced.
+- Fixed: all-notebook search now caps external notebook results and tells the user when matches are omitted.
+- Fixed: expired native drag move reconciliation now logs a warning instead of disappearing silently.
+- Fixed: hierarchy rollback still restores the previous parent even if attempted-parent cleanup fails.
 
 ## Current Validation Baseline
 
