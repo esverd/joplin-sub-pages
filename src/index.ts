@@ -1468,15 +1468,15 @@ async function moveBranchesToFolder(noteIds: string[]): Promise<void> {
     return;
   }
 
-  for (const branchRootId of branchRootsToDetach) {
-    await setPageParentLink(branchRootId, null);
-  }
-
   for (const movingNoteId of movingNoteIds) {
     await joplin.data.put(['notes', movingNoteId], null, {
       parent_id: folderId,
     });
     markNoteRecentlyChanged(movingNoteId);
+  }
+
+  for (const branchRootId of branchRootsToDetach) {
+    await setPageParentLink(branchRootId, null);
   }
 
   await showToast(`Moved ${movingNoteIds.length} page${movingNoteIds.length === 1 ? '' : 's'} to notebook.`);

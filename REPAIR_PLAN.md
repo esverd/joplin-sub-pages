@@ -23,6 +23,7 @@ This plan captures the deep investigation of the Joplin Sub-Pages plugin and tra
 - Fixed: all-notebook search now caps external notebook results and tells the user when matches are omitted.
 - Fixed: expired native drag move reconciliation now logs a warning instead of disappearing silently.
 - Fixed: hierarchy rollback still restores the previous parent even if attempted-parent cleanup fails.
+- Fixed: branch notebook moves now move notes before detaching Sub-Pages roots, reducing partial-failure damage.
 
 ## Current Validation Baseline
 
