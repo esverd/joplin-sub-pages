@@ -1,16 +1,20 @@
 # Joplin Sub-Pages
 
-Sub-Pages adds a notebook-scoped page tree panel to Joplin. Notes can contain child notes at any depth, while the native Joplin note list remains free to use its normal sorting.
+Sub-Pages adds a hierarchical page tree panel to Joplin. The panel follows the active notebook or Joplin's **All Notes** view, while the native note list remains free to use its normal sorting.
 
 ## Features
 
-- A dedicated **Sub-Pages** panel shows a collapsible note tree for the current notebook.
-- Notes can have children and descendants without changing the native note list order.
-- The default panel sort is **Recent groups**, which uses a page's own update time plus direct child updates so recently edited child pages lift their immediate parent group.
-- Panel search delegates to Joplin search. It can search the current notebook or all notebooks, with external notebook matches shown in a separate section.
+- A dedicated **Sub-Pages** panel shows a collapsible page tree for the current notebook.
+- Selecting **All Notes** shows one combined forest containing pages from every notebook. Root rows identify their notebook; relationships never cross notebook boundaries.
+- Notes and Joplin whiteboards can have children and descendants without changing the native note list order.
+- The default panel sort is **Recent groups**, which uses a page's own update time plus descendant updates so recently edited child pages lift their parent group.
+- Panel search combines Joplin keyword results with semantic results when Joplin's AI index is available. It falls back to keyword results when semantic search is disabled, unavailable, preparing, or fails.
+- In a notebook view, search can target that notebook or all notebooks, with external notebook matches shown separately. In **All Notes**, search always covers all notes.
 - Panel actions:
   - Create root page
+  - Create root whiteboard
   - Create child page
+  - Create child whiteboard
   - Move page under another page
   - Promote page to root
   - Unlink page from its parent and direct children
@@ -23,6 +27,10 @@ Sub-Pages adds a notebook-scoped page tree panel to Joplin. Notes can contain ch
 - Ctrl-click and Shift-click select multiple panel rows. Multi-selection is used by panel actions such as moving several notes or branches to a notebook.
 - Drag a Sub-Pages row onto another row to make it a child, onto the blank root drop area to promote a child to root, or onto Joplin's native notebook sidebar to move that page or branch to another notebook.
 - **Move branch to notebook...** moves selected pages and their Sub-Pages descendants together so parent/child links stay valid after a cross-notebook move.
+
+Root creation from **All Notes** prompts for the destination notebook. Child pages and child whiteboards are created in their parent's notebook.
+
+Semantic search uses the index managed by Joplin. The panel reports when that index is building or unavailable; no semantic-search setup or model data is stored by this plugin.
 
 ## Setup in Joplin
 
@@ -43,9 +51,11 @@ Because of that, this plugin uses these v1 behaviors:
 - The panel is the authoritative hierarchy UI; the native note list remains unchanged.
 - The custom panel supports hierarchy drag/drop within the panel and native note-drag payloads from the panel to Joplin's notebook sidebar. Dragging from Joplin's native note list into Sub-Pages to create hierarchy links is not implemented.
 - Collapse state is local to the panel and does not sync.
+- Parent and child links are notebook-local. **All Notes** combines each notebook's hierarchy into one display but does not permit cross-notebook parent links.
 - Mobile clients without the plugin still show ordinary Joplin notes. The hierarchy is invisible but harmless.
 - The plugin does not rewrite `note.order`.
 - The panel row menu is a custom webview menu, not Joplin's native note-list context menu. Other plugins can still add entries to Joplin's native note-list context menu, and Sub-Pages adds its own native context-menu entries there, but third-party plugin commands do not automatically appear inside the Sub-Pages panel menu. Use **Command palette...** from a panel row to select the note and open Joplin's command palette for native and plugin commands.
+- Joplin 3.7.9 does not expose the active **All Notes**/notebook note-list parent through its public plugin API. Sub-Pages isolates a version-specific adapter for this state and shows a compatibility warning if it cannot mirror the current Joplin view.
 
 ## Sync Behavior
 
@@ -54,7 +64,9 @@ The plugin does not create index notes, sidecar files, or per-note metadata for 
 - Child note: `subPages.parentId`
 - Parent note with ordered children: `subPages.childIds`
 
-Refreshing the panel is read-only. Repair reads all notes in the selected notebook, but only writes when existing Sub-Pages metadata is stale or inconsistent.
+Refreshing the panel is read-only. Repair reads the current notebook, or every notebook in **All Notes**, but only writes when existing Sub-Pages metadata is stale or inconsistent.
+
+Whiteboards remain ordinary Joplin notes whose bodies contain Joplin's fenced `jsoncanvas` data. Sub-Pages only adds the same hierarchy `userData` used for regular notes.
 
 The panel debounces tree refreshes after note edits and sync completion. Use **Refresh Sub-Pages panel** when you want to manually reload the tree from Joplin.
 
@@ -72,4 +84,4 @@ For local testing in Joplin Desktop, add this directory to **Options -> Plugins 
 
 ## Requirements
 
-- Joplin Desktop 3.3 or later.
+- Joplin Desktop 3.7.9 or later.

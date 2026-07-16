@@ -2,6 +2,18 @@ import joplin from 'api';
 import * as os from 'os';
 import * as path from 'path';
 import {
+  ALL_NOTES_FILTER_ID,
+  EMPTY_WHITEBOARD_BODY,
+  ViewScope,
+  classifyJoplinViewState,
+  groupIdsByParent,
+  isWhiteboardBody,
+  mainWindowStateFromRoot,
+  parentCycleAffectedIds,
+  reciprocalRankScores,
+  semanticSearchScope,
+} from './core';
+import {
   MenuItemLocation,
   ModelType,
   SettingItemType,
@@ -12,6 +24,7 @@ import {
 const COMMAND_TOGGLE_PANEL = 'subPages.togglePanel';
 const COMMAND_REFRESH_PANEL = 'subPages.refreshPanel';
 const COMMAND_CREATE_CHILD_PAGE = 'subPages.createChildPage';
+const COMMAND_CREATE_CHILD_WHITEBOARD = 'subPages.createChildWhiteboard';
 const COMMAND_MOVE_PAGE = 'subPages.movePage';
 const COMMAND_MOVE_BRANCH_TO_FOLDER = 'subPages.moveBranchToFolder';
 const COMMAND_PROMOTE_PAGE = 'subPages.promotePage';
@@ -35,6 +48,7 @@ const PANEL_ID = `${PLUGIN_ID}.panel`;
 const DIALOG_MOVE_PARENT_PREFIX = 'subPages.moveParentDialog';
 const DIALOG_MOVE_BRANCH_TO_FOLDER_PREFIX = 'subPages.moveBranchToFolderDialog';
 const DIALOG_MARKDOWN_EXPORT_PREFIX = 'subPages.markdownExportDialog';
+const DIALOG_CREATE_IN_FOLDER_PREFIX = 'subPages.createInFolderDialog';
 
 const SETTINGS_SECTION = 'subPages';
 const SETTING_PANEL_SORT_MODE = 'subPages.panelSortMode';
@@ -44,6 +58,8 @@ const CHILD_IDS_KEY = 'subPages.childIds';
 
 const DEFAULT_ROOT_TITLE = 'Untitled page';
 const DEFAULT_CHILD_TITLE = 'Untitled sub-page';
+const DEFAULT_ROOT_WHITEBOARD_TITLE = 'Untitled whiteboard';
+const DEFAULT_CHILD_WHITEBOARD_TITLE = 'Untitled sub-page whiteboard';
 const DEFAULT_EXPORT_TITLE = 'Untitled note';
 const NOTE_LIST_PAGE_LIMIT = 100;
 const RECENT_CHANGE_TIME_TTL = 10 * 60 * 1000;
@@ -52,9 +68,26 @@ const NATIVE_DRAG_MOVE_TTL = 2 * 60 * 1000;
 const NATIVE_DRAG_RECONCILE_DELAYS = [400, 1200, 3000, 7000, 12000];
 const MAX_PANEL_SEARCH_CACHE_ENTRIES = 50;
 const MAX_EXTERNAL_SEARCH_RESULTS = 50;
+const PRIVATE_VIEW_VERIFY_INTERVAL = 10_000;
 
 type PanelSortMode = 'recentGroups' | 'manual' | 'title';
 type SearchScope = 'all' | 'notebook';
+type PageType = 'note' | 'whiteboard';
+
+interface JoplinViewContext {
+  viewScope: ViewScope;
+  folder: FolderSummary | null;
+  key: string;
+  compatibilityError: string | null;
+}
+
+interface AiIndexStatus {
+  ready: boolean;
+  state: 'unavailable' | 'disabled' | 'preparing' | 'indexing' | 'ready';
+  modelId: string | null;
+  notesIndexed: number;
+  totalNotes: number;
+}
 
 interface FolderSummary {
   id: string;
@@ -76,7 +109,11 @@ interface NoteSummary {
   updated_time: number;
   is_todo: number;
   todo_completed: number;
+  deleted_time: number;
+  is_conflict: number;
   user_data: unknown;
+  notebookTitle: string;
+  pageType: PageType;
 }
 
 interface NoteExportData {
@@ -94,7 +131,9 @@ interface SearchExternalResult {
   id: string;
   title: string;
   parentId: string;
+  notebookId: string;
   notebookTitle: string;
+  pageType: PageType;
   isTodo: boolean;
   todoCompleted: boolean;
   updatedTime: number;
@@ -109,6 +148,9 @@ interface TreeNode {
   id: string;
   title: string;
   parentId: string | null;
+  notebookId: string;
+  notebookTitle: string;
+  pageType: PageType;
   updatedTime: number;
   effectiveTime: number;
   isTodo: boolean;
@@ -171,10 +213,19 @@ let hasPostedSelectedNoteId = false;
 let settledRefreshTimers: any[] = [];
 let panelStateRevision = 0;
 let lastPanelFolderId: string | null | undefined = undefined;
+let lastPanelViewKey: string | undefined = undefined;
+let lastValidViewContext: JoplinViewContext | null = null;
+let lastValidNotebookContext: JoplinViewContext | null = null;
+let lastNotesParentSetting: string | null = null;
+let lastPrivateViewVerificationAt = 0;
 let dialogSerial = 0;
 const recentChangeTimes = new Map<string, number>();
 const panelSearchCache = new Map<string, any>();
 const pendingNativeDragMoves = new Map<string, PendingNativeDragMove>();
+const whiteboardTypeCache = new Map<string, { updatedTime: number; isWhiteboard: boolean }>();
+const whiteboardProbeIds = new Set<string>();
+let whiteboardCandidateRevision = -1;
+let whiteboardCandidateIds = new Set<string>();
 let nativeDragReconcileTimers: any[] = [];
 
 joplin.plugins.register({
@@ -201,7 +252,7 @@ async function registerSettings(): Promise<void> {
       section: SETTINGS_SECTION,
       public: true,
       label: 'Panel sort mode',
-      description: 'Controls sibling ordering in the Sub-Pages panel. Recent groups uses each page update time plus direct child updates.',
+      description: 'Controls sibling ordering in the Sub-Pages panel. Recent groups uses each page update time plus descendant updates.',
       isEnum: true,
       options: {
         recentGroups: 'Recent groups',
@@ -233,6 +284,9 @@ async function registerCommands(): Promise<void> {
     iconName: 'fas fa-sync',
     execute: async () => {
       await runCommand(async () => {
+        lastPrivateViewVerificationAt = 0;
+        invalidateWhiteboardCandidates();
+        markPanelStateChanged();
         await refreshPanel(true);
       });
     },
@@ -250,6 +304,25 @@ async function registerCommands(): Promise<void> {
           return;
         }
         const createdId = await createChildPage(note.id);
+        if (createdId) rememberSelectedNoteId(createdId);
+        markPanelStateChanged();
+        await refreshPanel(true);
+      });
+    },
+  });
+
+  await joplin.commands.register({
+    name: COMMAND_CREATE_CHILD_WHITEBOARD,
+    label: 'Create child whiteboard',
+    iconName: 'fas fa-th',
+    execute: async (...args: any[]) => {
+      await runCommand(async () => {
+        const note = await resolveContextNote(args);
+        if (!note) {
+          await notify('Select a page before creating a child whiteboard.');
+          return;
+        }
+        const createdId = await createChildPage(note.id, 'whiteboard');
         if (createdId) rememberSelectedNoteId(createdId);
         markPanelStateChanged();
         await refreshPanel(true);
@@ -367,6 +440,7 @@ async function registerMenus(): Promise<void> {
   await joplin.views.menuItems.create('subPages.repairMetadata.tools', COMMAND_REPAIR_METADATA, MenuItemLocation.Tools);
 
   await joplin.views.menuItems.create('subPages.createChildPage.context', COMMAND_CREATE_CHILD_PAGE, MenuItemLocation.NoteListContextMenu);
+  await joplin.views.menuItems.create('subPages.createChildWhiteboard.context', COMMAND_CREATE_CHILD_WHITEBOARD, MenuItemLocation.NoteListContextMenu);
   await joplin.views.menuItems.create('subPages.movePage.context', COMMAND_MOVE_PAGE, MenuItemLocation.NoteListContextMenu);
   await joplin.views.menuItems.create('subPages.moveBranchToFolder.context', COMMAND_MOVE_BRANCH_TO_FOLDER, MenuItemLocation.NoteListContextMenu);
   await joplin.views.menuItems.create('subPages.promotePage.context', COMMAND_PROMOTE_PAGE, MenuItemLocation.NoteListContextMenu);
@@ -445,14 +519,16 @@ async function handlePanelMessage(message: any): Promise<any> {
     }
 
     if (name === 'refresh') {
+      lastPrivateViewVerificationAt = 0;
+      invalidateWhiteboardCandidates();
+      markPanelStateChanged();
       return panelStateResponse();
     }
 
     if (name === 'stateIfChanged') {
       const revision = typeof message?.revision === 'number' ? message.revision : -1;
-      const folder = await selectedFolderSummary();
-      const selectedFolderId = folder?.id ?? null;
-      if (revision === panelStateRevision && selectedFolderId === lastPanelFolderId) {
+      const context = await activeJoplinViewContext();
+      if (revision === panelStateRevision && context.key === lastPanelViewKey) {
         return {
           ok: true,
           revision: panelStateRevision,
@@ -480,7 +556,14 @@ async function handlePanelMessage(message: any): Promise<any> {
     }
 
     if (name === 'createRoot') {
-      const createdId = await createRootPage();
+      const createdId = await createRootPage('note');
+      if (createdId) rememberSelectedNoteId(createdId);
+      markPanelStateChanged();
+      return panelStateResponse(undefined, createdId || undefined);
+    }
+
+    if (name === 'createRootWhiteboard') {
+      const createdId = await createRootPage('whiteboard');
       if (createdId) rememberSelectedNoteId(createdId);
       markPanelStateChanged();
       return panelStateResponse(undefined, createdId || undefined);
@@ -541,7 +624,14 @@ async function handlePanelMessage(message: any): Promise<any> {
     }
 
     if (name === 'createChild' && noteId) {
-      const createdId = await createChildPage(noteId);
+      const createdId = await createChildPage(noteId, 'note');
+      if (createdId) rememberSelectedNoteId(createdId);
+      markPanelStateChanged();
+      return panelStateResponse(undefined, createdId || undefined);
+    }
+
+    if (name === 'createChildWhiteboard' && noteId) {
+      const createdId = await createChildPage(noteId, 'whiteboard');
       if (createdId) rememberSelectedNoteId(createdId);
       markPanelStateChanged();
       return panelStateResponse(undefined, createdId || undefined);
@@ -647,26 +737,32 @@ function normalizeIdArray(value: any): string[] {
 
 async function panelSearchResponse(query: string, scope: SearchScope): Promise<any> {
   const trimmedQuery = query.trim();
+  const context = await activeJoplinViewContext();
+  const effectiveScope: SearchScope = context.viewScope === 'all' ? 'all' : scope;
   if (!trimmedQuery) {
     return {
       ok: true,
       query: '',
-      scope,
+      scope: effectiveScope,
       noteIds: [],
       externalResults: [],
     };
   }
 
-  const folder = await selectedFolderSummary();
-  const cacheKey = `${panelStateRevision}:${scope}:${folder?.id ?? ''}:${trimmedQuery.toLocaleLowerCase()}`;
+  const folder = context.folder;
+  const aiIndexStatus = await getAiIndexStatusSafe();
+  const aiCacheKey = aiIndexStatus
+    ? `${aiIndexStatus.state}:${aiIndexStatus.modelId ?? ''}:${aiIndexStatus.notesIndexed}:${aiIndexStatus.totalNotes}`
+    : 'unknown';
+  const cacheKey = `${panelStateRevision}:${context.key}:${effectiveScope}:${aiCacheKey}:${trimmedQuery.toLocaleLowerCase()}`;
   const cached = panelSearchCache.get(cacheKey);
   if (cached) return cached;
 
-  if (!folder && scope === 'notebook') {
+  if (!folder && context.viewScope === 'notebook') {
     return {
       ok: false,
       query: trimmedQuery,
-      scope,
+      scope: effectiveScope,
       noteIds: [],
       externalResults: [],
       message: 'No notebook is selected.',
@@ -674,22 +770,60 @@ async function panelSearchResponse(query: string, scope: SearchScope): Promise<a
   }
 
   try {
-    const notes = folder ? await listNotebookNotes(folder.id) : [];
-    const notebookNoteIds = new Set(notes.map(note => note.id));
-    const searchResults = await searchNotes(trimmedQuery);
+    const viewNotes = context.viewScope === 'all' ? await listAllNotes() : await listNotebookNotes(folder!.id);
+    const viewNoteIds = new Set(viewNotes.map(note => note.id));
+    const keywordResults = (await searchNotes(trimmedQuery))
+      .filter((note) => !note.deleted_time && !note.is_conflict)
+      .filter((note) => effectiveScope === 'all' || viewNoteIds.has(note.id));
+    const semanticNoteIds: string[] = [];
+    let semanticMessage = semanticStatusMessage(aiIndexStatus);
+
+    if (aiIndexStatus && (aiIndexStatus.state === 'ready' || aiIndexStatus.state === 'indexing')) {
+      try {
+        const results = await joplin.ai.search({
+          query: { text: trimmedQuery },
+          scope: semanticSearchScope(effectiveScope, folder?.id ?? null),
+          relevance: 'normal',
+        });
+        const seenSemanticIds = new Set<string>();
+        for (const result of Array.isArray(results) ? results : []) {
+          const resultNoteId = nonEmptyString(result?.noteId);
+          if (!resultNoteId || seenSemanticIds.has(resultNoteId)) continue;
+          seenSemanticIds.add(resultNoteId);
+          semanticNoteIds.push(resultNoteId);
+        }
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        semanticMessage = `Semantic search was unavailable (${detail}); showing keyword matches.`;
+        console.warn('Sub-Pages: semantic search failed; using keyword results', error);
+      }
+    }
+
+    const noteById = new Map<string, NoteSummary>();
+    for (const note of viewNotes) noteById.set(note.id, note);
+    for (const note of keywordResults) noteById.set(note.id, note);
+    const missingSemanticIds = semanticNoteIds.filter((noteId) => !noteById.has(noteId));
+    const missingSemanticNotes = await Promise.all(missingSemanticIds.map((noteId) => getNote(noteId)));
+    for (const note of missingSemanticNotes) {
+      if (note && !note.deleted_time && !note.is_conflict) noteById.set(note.id, note);
+    }
+
+    const rankedResults = mergeHybridSearchResults(keywordResults, semanticNoteIds, noteById)
+      .filter((note) => effectiveScope === 'all' || viewNoteIds.has(note.id));
+    await decorateNotes(rankedResults);
     const noteIds: string[] = [];
     const externalResults: SearchExternalResult[] = [];
     const folderTitleCache = new Map<string, string>();
     const seenNoteIds = new Set<string>();
     let omittedExternalResultCount = 0;
 
-    for (const note of searchResults) {
+    for (const note of rankedResults) {
       if (seenNoteIds.has(note.id)) continue;
       seenNoteIds.add(note.id);
 
-      if (notebookNoteIds.has(note.id)) {
+      if (viewNoteIds.has(note.id)) {
         noteIds.push(note.id);
-      } else if (scope === 'all') {
+      } else if (effectiveScope === 'all' && context.viewScope === 'notebook') {
         if (externalResults.length < MAX_EXTERNAL_SEARCH_RESULTS) {
           externalResults.push(await toExternalSearchResult(note, folderTitleCache));
         } else {
@@ -701,12 +835,16 @@ async function panelSearchResponse(query: string, scope: SearchScope): Promise<a
     const response = {
       ok: true,
       query: trimmedQuery,
-      scope,
+      scope: effectiveScope,
       noteIds,
       externalResults,
-      message: omittedExternalResultCount
-        ? `Showing first ${MAX_EXTERNAL_SEARCH_RESULTS} external notebook matches. Narrow the search to see more.`
-        : undefined,
+      aiIndexStatus,
+      message: [
+        semanticMessage,
+        omittedExternalResultCount
+          ? `Showing first ${MAX_EXTERNAL_SEARCH_RESULTS} external notebook matches. Narrow the search to see more.`
+          : '',
+      ].filter(Boolean).join(' ') || undefined,
     };
     setPanelSearchCache(cacheKey, response);
     return response;
@@ -715,12 +853,42 @@ async function panelSearchResponse(query: string, scope: SearchScope): Promise<a
     return {
       ok: false,
       query: trimmedQuery,
-      scope,
+      scope: effectiveScope,
       noteIds: [],
       externalResults: [],
+      aiIndexStatus,
       message: 'Search failed. Try Refresh Sub-Pages panel or restart Joplin.',
     };
   }
+}
+
+function mergeHybridSearchResults(
+  keywordResults: NoteSummary[],
+  semanticNoteIds: string[],
+  noteById: Map<string, NoteSummary>
+): NoteSummary[] {
+  const scores = reciprocalRankScores(keywordResults.map((note) => note.id), semanticNoteIds);
+
+  return [...scores.keys()]
+    .map((noteId) => noteById.get(noteId))
+    .filter((note): note is NoteSummary => !!note)
+    .sort((a, b) => {
+      const scoreDelta = (scores.get(b.id) ?? 0) - (scores.get(a.id) ?? 0);
+      if (scoreDelta) return scoreDelta;
+      const timeDelta = noteTime(b) - noteTime(a);
+      return timeDelta || compareTitles(displayTitle(a), displayTitle(b));
+    });
+}
+
+function semanticStatusMessage(status: AiIndexStatus | null): string {
+  if (!status) return 'Semantic search status is unavailable; showing keyword matches.';
+  if (status.state === 'indexing') {
+    return `Semantic index is still building (${status.notesIndexed}/${status.totalNotes} notes); results may be incomplete.`;
+  }
+  if (status.state === 'disabled') return 'Semantic search is disabled in Joplin AI settings; showing keyword matches.';
+  if (status.state === 'preparing') return 'Semantic search is preparing its model; showing keyword matches.';
+  if (status.state === 'unavailable') return 'Semantic search is unavailable on this platform; showing keyword matches.';
+  return '';
 }
 
 function setPanelSearchCache(cacheKey: string, response: any): void {
@@ -761,7 +929,7 @@ async function searchNotes(query: string): Promise<NoteSummary[]> {
 }
 
 function searchNoteFields(): string[] {
-  return ['id', 'title', 'parent_id', 'user_updated_time', 'updated_time', 'is_todo', 'todo_completed'];
+  return ['id', 'title', 'parent_id', 'user_updated_time', 'updated_time', 'is_todo', 'todo_completed', 'deleted_time', 'is_conflict'];
 }
 
 async function toExternalSearchResult(note: NoteSummary, folderTitleCache: Map<string, string>): Promise<SearchExternalResult> {
@@ -769,7 +937,9 @@ async function toExternalSearchResult(note: NoteSummary, folderTitleCache: Map<s
     id: note.id,
     title: displayTitle(note),
     parentId: note.parent_id,
-    notebookTitle: await searchResultNotebookTitle(note.parent_id, folderTitleCache),
+    notebookId: note.parent_id,
+    notebookTitle: note.notebookTitle || await searchResultNotebookTitle(note.parent_id, folderTitleCache),
+    pageType: note.pageType,
     isTodo: !!note.is_todo,
     todoCompleted: !!note.todo_completed,
     updatedTime: noteTime(note),
@@ -807,6 +977,7 @@ function scheduleSettledPanelRefreshes(): void {
   settledRefreshTimers.forEach((timer) => clearTimeout(timer));
   settledRefreshTimers = SETTLED_REFRESH_DELAYS.map((delay) => {
     return setTimeout(() => {
+      invalidateWhiteboardCandidates();
       schedulePanelRefresh(0);
     }, delay);
   });
@@ -858,9 +1029,8 @@ async function refreshPanel(force = false): Promise<void> {
 }
 
 async function refreshPanelIfSelectedFolderChanged(): Promise<void> {
-  const folder = await selectedFolderSummary();
-  const selectedFolderId = folder?.id ?? null;
-  if (lastPanelFolderId !== undefined && selectedFolderId === lastPanelFolderId) return;
+  const context = await activeJoplinViewContext();
+  if (lastPanelViewKey !== undefined && context.key === lastPanelViewKey) return;
 
   markPanelStateChanged();
   schedulePanelRefresh(50);
@@ -868,7 +1038,11 @@ async function refreshPanelIfSelectedFolderChanged(): Promise<void> {
 
 async function handleNoteChangeEvent(event: any): Promise<void> {
   const noteId = changedNoteIdFromEvent(event) ?? await selectedNoteId();
-  if (noteId) markNoteRecentlyChanged(noteId);
+  if (noteId) {
+    markNoteRecentlyChanged(noteId);
+    whiteboardProbeIds.add(noteId);
+    whiteboardTypeCache.delete(noteId);
+  }
   await reconcilePendingNativeDragMoves(noteId || undefined);
   markPanelStateChanged();
 
@@ -1000,57 +1174,70 @@ async function panelVisible(): Promise<boolean> {
 
 async function buildPanelState(selectedNoteIdOverride?: string): Promise<any> {
   try {
-    const folder = await selectedFolderSummary();
+    const context = await activeJoplinViewContext();
+    const folder = context.folder;
     lastPanelFolderId = folder?.id ?? null;
+    lastPanelViewKey = context.key;
     const currentSelectedNoteId = selectedNoteIdOverride !== undefined ? selectedNoteIdOverride : await selectedNoteId();
-    if (!folder) {
+    if (context.viewScope === 'notebook' && !folder) {
       return {
         folder: null,
+        viewScope: context.viewScope,
+        compatibilityError: context.compatibilityError,
         selectedNoteId: currentSelectedNoteId,
         sortMode: await panelSortMode(),
         nodes: [],
         noteCount: 0,
         repairCount: 0,
         metadataItemCount: 0,
-        error: 'No notebook is selected.',
+        aiIndexStatus: await getAiIndexStatusSafe(),
+        error: context.compatibilityError || 'No notebook is selected.',
       };
     }
 
-    const notes = await listNotebookNotes(folder.id);
+    const notes = context.viewScope === 'all' ? await listAllNotes() : await listNotebookNotes(folder!.id);
+    await decorateNotes(notes);
     const sortMode = await panelSortMode();
-    const tree = await buildTree(notes, folder.id, sortMode);
+    const tree = await buildTree(notes, sortMode);
 
     return {
       folder,
+      viewScope: context.viewScope,
+      compatibilityError: context.compatibilityError,
       selectedNoteId: currentSelectedNoteId,
       sortMode,
       nodes: tree.roots,
       noteCount: notes.length,
       repairCount: tree.repairCount,
       metadataItemCount: tree.metadataItemCount,
+      aiIndexStatus: await getAiIndexStatusSafe(),
       error: null,
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     return {
       folder: null,
+      viewScope: lastValidViewContext?.viewScope ?? 'notebook',
+      compatibilityError: lastValidViewContext?.compatibilityError ?? null,
       selectedNoteId: selectedNoteIdOverride !== undefined ? selectedNoteIdOverride : await selectedNoteId(),
       sortMode: await panelSortMode(),
       nodes: [],
       noteCount: 0,
       repairCount: 0,
       metadataItemCount: 0,
+      aiIndexStatus: await getAiIndexStatusSafe(),
       error: message,
     };
   }
 }
 
-async function buildTree(notes: NoteSummary[], notebookId: string, sortMode: PanelSortMode): Promise<TreeBuildResult> {
+async function buildTree(notes: NoteSummary[], sortMode: PanelSortMode): Promise<TreeBuildResult> {
   const noteMap = toNoteMap(notes);
   const metaMap = await buildMetaMap(notes);
+  const cycleAffectedIds = cycleAffectedNoteIds(notes, metaMap, noteMap);
   const metadataItemCount = metadataItemCountFor(metaMap);
-  const externalParentReasons = await externalParentRepairReasons(notes, notebookId, noteMap, metaMap);
-  const repairOperations = repairOperationsForNotes(notes, noteMap, metaMap, externalParentReasons);
+  const externalParentReasons = await externalParentRepairReasons(notes, noteMap, metaMap);
+  const repairOperations = repairOperationsForNotes(notes, noteMap, metaMap, externalParentReasons, cycleAffectedIds);
   const parentByNoteId = new Map<string, string | null>();
   const repairReasons = new Map<string, string>();
 
@@ -1068,7 +1255,9 @@ async function buildTree(notes: NoteSummary[], notebookId: string, sortMode: Pan
       repairReason = 'Self parent';
     } else if (!noteMap.has(parentId)) {
       repairReason = externalParentReasons.get(note.id) ?? 'Missing parent';
-    } else if (hasParentCycle(note.id, metaMap, noteMap)) {
+    } else if (noteMap.get(parentId)!.parent_id !== note.parent_id) {
+      repairReason = 'Parent is in another notebook';
+    } else if (cycleAffectedIds.has(note.id)) {
       repairReason = 'Circular parent chain';
     }
 
@@ -1103,6 +1292,9 @@ async function buildTree(notes: NoteSummary[], notebookId: string, sortMode: Pan
       id: note.id,
       title: displayTitle(note),
       parentId: parentByNoteId.get(note.id) ?? null,
+      notebookId: note.parent_id,
+      notebookTitle: note.notebookTitle,
+      pageType: note.pageType,
       updatedTime,
       effectiveTime,
       isTodo: !!note.is_todo,
@@ -1151,6 +1343,10 @@ function markPanelStateChanged(): void {
   panelSearchCache.clear();
 }
 
+function invalidateWhiteboardCandidates(): void {
+  whiteboardCandidateRevision = -1;
+}
+
 function sortTree(nodes: TreeNode[], parentId: string | null, sortMode: PanelSortMode, metaMap: Map<string, HierarchyMeta>): void {
   for (const node of nodes) {
     sortTree(node.children, node.id, sortMode, metaMap);
@@ -1185,22 +1381,27 @@ function applyMoveFlags(nodes: TreeNode[], sortMode: PanelSortMode): void {
   }
 }
 
-async function createRootPage(): Promise<string | null> {
-  const folder = await selectedFolderSummary();
+async function createRootPage(pageType: PageType = 'note'): Promise<string | null> {
+  const context = await activeJoplinViewContext();
+  const folder = context.viewScope === 'all'
+    ? await chooseNotebookForCreation(pageType)
+    : context.folder;
   if (!folder) {
-    await notify('Select a notebook before creating a root page.');
+    if (context.viewScope !== 'all') await notify('Select a notebook before creating a root page.');
     return null;
   }
 
-  const title = await uniquePageTitle(folder.id, DEFAULT_ROOT_TITLE);
+  const baseTitle = pageType === 'whiteboard' ? DEFAULT_ROOT_WHITEBOARD_TITLE : DEFAULT_ROOT_TITLE;
+  const title = await uniquePageTitle(folder.id, baseTitle);
   const created = await joplin.data.post(['notes'], null, {
     parent_id: folder.id,
     title,
-    body: '',
+    body: pageType === 'whiteboard' ? EMPTY_WHITEBOARD_BODY : '',
   });
 
   if (created?.id) {
     const noteId = String(created.id);
+    if (pageType === 'whiteboard') whiteboardTypeCache.set(noteId, { updatedTime: numberValue(created.updated_time), isWhiteboard: true });
     await openNote(noteId);
     await showToast(`Created "${title}".`);
     return noteId;
@@ -1209,18 +1410,19 @@ async function createRootPage(): Promise<string | null> {
   return null;
 }
 
-async function createChildPage(parentId: string): Promise<string | null> {
+async function createChildPage(parentId: string, pageType: PageType = 'note'): Promise<string | null> {
   const parent = await getNote(parentId);
   if (!parent) {
     await notify('The parent page could not be loaded.');
     return null;
   }
 
-  const title = await uniquePageTitle(parent.parent_id, DEFAULT_CHILD_TITLE);
+  const baseTitle = pageType === 'whiteboard' ? DEFAULT_CHILD_WHITEBOARD_TITLE : DEFAULT_CHILD_TITLE;
+  const title = await uniquePageTitle(parent.parent_id, baseTitle);
   const created = await joplin.data.post(['notes'], null, {
     parent_id: parent.parent_id,
     title,
-    body: '',
+    body: pageType === 'whiteboard' ? EMPTY_WHITEBOARD_BODY : '',
   });
 
   const child = created?.id ? await getNote(String(created.id)) : null;
@@ -1232,9 +1434,59 @@ async function createChildPage(parentId: string): Promise<string | null> {
   const attached = await attachPageToParent(child, parent);
   if (!attached) return null;
 
+  if (pageType === 'whiteboard') {
+    child.pageType = 'whiteboard';
+    whiteboardTypeCache.set(child.id, { updatedTime: child.updated_time, isWhiteboard: true });
+  }
   await openNote(child.id);
-  await showToast(`Created child page under "${displayTitle(parent)}".`);
+  await showToast(`Created child ${pageType === 'whiteboard' ? 'whiteboard' : 'page'} under "${displayTitle(parent)}".`);
   return child.id;
+}
+
+async function chooseNotebookForCreation(pageType: PageType): Promise<FolderSummary | null> {
+  const folders = await folderCandidates();
+  if (!folders.length) {
+    await notify('No notebooks were found.');
+    return null;
+  }
+
+  const options = folders.map((folder) => {
+    return `<option value="${escapeHtml(folder.id)}">${escapeHtml(folder.path.join(' / '))}</option>`;
+  }).join('');
+  const handle = await createDialog(DIALOG_CREATE_IN_FOLDER_PREFIX);
+  const itemLabel = pageType === 'whiteboard' ? 'whiteboard' : 'page';
+  await joplin.views.dialogs.setHtml(handle, `
+    <!doctype html>
+    <html>
+      <head>
+        <style>
+          html, body { box-sizing: border-box; color: var(--joplin-color, #222); font-family: var(--joplin-font-family, sans-serif); font-size: var(--joplin-font-size, 13px); margin: 0; }
+          *, *::before, *::after { box-sizing: inherit; }
+          form { min-width: 0; padding: 16px; width: min(380px, calc(100vw - 32px)); }
+          p { margin: 0 0 12px; }
+          label { display: block; font-weight: 600; }
+          select { background: var(--joplin-background-color, #fff); color: var(--joplin-color, #222); display: block; font: inherit; font-weight: normal; margin-top: 8px; width: 100%; }
+        </style>
+      </head>
+      <body>
+        <form name="createInFolder">
+          <p>Choose a notebook for the new root ${itemLabel}.</p>
+          <label>Notebook<select name="folderId">${options}</select></label>
+        </form>
+      </body>
+    </html>
+  `);
+  await joplin.views.dialogs.setButtons(handle, [
+    { id: 'ok', title: 'Create' },
+    { id: 'cancel', title: 'Cancel' },
+  ]);
+  await joplin.views.dialogs.setFitToContent(handle, true);
+
+  const result = await joplin.views.dialogs.open(handle);
+  const folderId = result.id === 'ok' ? result.formData?.createInFolder?.folderId : null;
+  if (typeof folderId !== 'string' || !folderId) return null;
+  const candidate = folders.find((folder) => folder.id === folderId);
+  return candidate ? { id: candidate.id, title: candidate.path[candidate.path.length - 1] || 'Selected notebook' } : null;
 }
 
 async function attachPageToParent(child: NoteSummary, parent: NoteSummary): Promise<boolean> {
@@ -1635,11 +1887,12 @@ async function moveSibling(noteId: string, direction: -1 | 1): Promise<void> {
 }
 
 async function repairCurrentNotebookMetadata(): Promise<number | null> {
-  const operations = await repairOperationsForCurrentNotebook();
+  const context = await activeJoplinViewContext();
+  const operations = await repairOperationsForCurrentView(context);
   if (!operations.length) return 0;
 
   const confirmed = await joplin.views.dialogs.showMessageBox(
-    `Repair will write ${operations.length} Sub-Pages metadata item${operations.length === 1 ? '' : 's'} in the selected notebook. Continue?`
+    `Repair will write ${operations.length} Sub-Pages metadata item${operations.length === 1 ? '' : 's'} in ${context.viewScope === 'all' ? 'All Notes' : 'the selected notebook'}. Continue?`
   );
   if (confirmed !== 0) return null;
 
@@ -1658,25 +1911,27 @@ async function repairCurrentNotebookMetadata(): Promise<number | null> {
   return changes;
 }
 
-async function repairOperationsForCurrentNotebook(): Promise<RepairOperation[]> {
-  const folder = await selectedFolderSummary();
-  if (!folder) {
+async function repairOperationsForCurrentView(context?: JoplinViewContext): Promise<RepairOperation[]> {
+  context = context ?? await activeJoplinViewContext();
+  if (context.viewScope === 'notebook' && !context.folder) {
     await notify('Select a notebook before repairing Sub-Pages metadata.');
     return [];
   }
 
-  const notes = await listNotebookNotes(folder.id);
+  const notes = context.viewScope === 'all' ? await listAllNotes() : await listNotebookNotes(context.folder!.id);
   const noteMap = toNoteMap(notes);
   const metaMap = await buildMetaMap(notes);
-  const externalReasons = await externalParentRepairReasons(notes, folder.id, noteMap, metaMap);
-  return repairOperationsForNotes(notes, noteMap, metaMap, externalReasons);
+  const cycleAffectedIds = cycleAffectedNoteIds(notes, metaMap, noteMap);
+  const externalReasons = await externalParentRepairReasons(notes, noteMap, metaMap);
+  return repairOperationsForNotes(notes, noteMap, metaMap, externalReasons, cycleAffectedIds);
 }
 
 function repairOperationsForNotes(
   notes: NoteSummary[],
   noteMap: Map<string, NoteSummary>,
   metaMap: Map<string, HierarchyMeta>,
-  externalReasons: Map<string, string>
+  externalReasons: Map<string, string>,
+  cycleAffectedIds: Set<string>
 ): RepairOperation[] {
   const effectiveParentIds = new Map<string, string | null>();
   const operations: RepairOperation[] = [];
@@ -1687,7 +1942,8 @@ function repairOperationsForNotes(
     const invalidParent = !!parentId && (
       parentId === note.id
       || !noteMap.has(parentId)
-      || hasParentCycle(note.id, metaMap, noteMap)
+      || noteMap.get(parentId)?.parent_id !== note.parent_id
+      || cycleAffectedIds.has(note.id)
       || externalReasons.has(note.id)
     );
 
@@ -1699,11 +1955,11 @@ function repairOperationsForNotes(
     }
   }
 
+  const childIdsByParent = groupIdsByParent(notes.map((note) => note.id), effectiveParentIds);
+
   for (const parent of notes) {
     const meta = metaMap.get(parent.id) ?? emptyMeta();
-    const childIds = notes
-      .filter((note) => effectiveParentIds.get(note.id) === parent.id)
-      .map((note) => note.id);
+    const childIds = childIdsByParent.get(parent.id) ?? [];
 
     const orderedChildIds = orderChildIdsForRepair(meta.childIds, childIds, noteMap);
     if (orderedChildIds.length) {
@@ -1856,6 +2112,146 @@ async function selectedFolderSummary(): Promise<FolderSummary | null> {
   }
 }
 
+async function folderSummaryById(folderId: string): Promise<FolderSummary | null> {
+  if (!folderId) return null;
+  try {
+    const folder = await joplin.data.get(['folders', folderId], { fields: ['id', 'title'] });
+    if (!folder?.id) return null;
+    return {
+      id: String(folder.id),
+      title: typeof folder.title === 'string' && folder.title.trim() ? folder.title.trim() : 'Selected notebook',
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function activeJoplinViewContext(): Promise<JoplinViewContext> {
+  let notesParentSetting: string | null = null;
+  try {
+    const [value] = await joplin.settings.globalValues(['notesParent']);
+    notesParentSetting = typeof value === 'string' ? value : null;
+    const privateStateIsFresh = Date.now() - lastPrivateViewVerificationAt < PRIVATE_VIEW_VERIFY_INTERVAL;
+    if (lastValidViewContext && privateStateIsFresh && notesParentSetting !== null && notesParentSetting === lastNotesParentSetting) {
+      return lastValidViewContext;
+    }
+  } catch {
+    // The private store path below remains the authoritative fallback.
+  }
+
+  try {
+    // Joplin 3.7.9 does not expose the active note-list parent publicly. The
+    // sandbox proxy can reach the workspace's Redux store, so isolate that
+    // version-specific access here and keep the rest of the plugin on public APIs.
+    lastPrivateViewVerificationAt = Date.now();
+    const rootState = await withTimeout((joplin.workspace as any).store.getState(), 2500, 'Joplin view context');
+    const state = mainWindowStateFromRoot(rootState);
+    const classification = classifyJoplinViewState(state);
+    if (!state || !classification) {
+      throw new Error('Joplin main-window note-list state is unavailable.');
+    }
+
+    if (classification.viewScope === 'all') {
+      const context: JoplinViewContext = {
+        viewScope: 'all',
+        folder: null,
+        key: `all:${ALL_NOTES_FILTER_ID}`,
+        compatibilityError: null,
+      };
+      lastNotesParentSetting = notesParentSetting;
+      lastValidViewContext = context;
+      return context;
+    }
+
+    if (!classification.folderId && lastValidNotebookContext) {
+      const context = { ...lastValidNotebookContext, compatibilityError: null };
+      lastNotesParentSetting = notesParentSetting;
+      lastValidViewContext = context;
+      return context;
+    }
+
+    const stateFolderId = classification.folderId ?? '';
+    const folder = stateFolderId ? await folderSummaryById(stateFolderId) : await selectedFolderSummary();
+    const context: JoplinViewContext = {
+      viewScope: 'notebook',
+      folder,
+      key: `notebook:${folder?.id ?? ''}`,
+      compatibilityError: null,
+    };
+    lastNotesParentSetting = notesParentSetting;
+    lastValidViewContext = context;
+    if (folder) lastValidNotebookContext = context;
+    return context;
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    const compatibilityError = `Unable to mirror Joplin's notebook/All Notes selection on this build. ${detail}`;
+    console.warn('Sub-Pages: private Joplin view context adapter failed', error);
+    const settingContext = await viewContextFromNotesParentSetting(notesParentSetting);
+    if (settingContext) {
+      lastNotesParentSetting = notesParentSetting;
+      lastValidViewContext = { ...settingContext, key: `${settingContext.key}:adapter-error`, compatibilityError };
+      return lastValidViewContext;
+    }
+    if (lastValidViewContext?.viewScope === 'notebook') {
+      lastValidViewContext = {
+        ...lastValidViewContext,
+        key: lastValidViewContext.key.endsWith(':adapter-error') ? lastValidViewContext.key : `${lastValidViewContext.key}:adapter-error`,
+        compatibilityError,
+      };
+      return lastValidViewContext;
+    }
+
+    const folder = await selectedFolderSummary();
+    return {
+      viewScope: 'notebook',
+      folder,
+      key: `unsupported:${folder?.id ?? ''}`,
+      compatibilityError,
+    };
+  }
+}
+
+async function viewContextFromNotesParentSetting(raw: string | null): Promise<JoplinViewContext | null> {
+  if (!raw) return null;
+  try {
+    const value = JSON.parse(raw);
+    if (value?.type === 'SmartFilter' && value?.selectedItemId === ALL_NOTES_FILTER_ID) {
+      return {
+        viewScope: 'all',
+        folder: null,
+        key: `all:${ALL_NOTES_FILTER_ID}`,
+        compatibilityError: null,
+      };
+    }
+    if (value?.type === 'Folder' && typeof value.selectedItemId === 'string') {
+      const folder = await folderSummaryById(value.selectedItemId);
+      const context: JoplinViewContext = {
+        viewScope: 'notebook',
+        folder,
+        key: `notebook:${folder?.id ?? ''}`,
+        compatibilityError: null,
+      };
+      if (folder) lastValidNotebookContext = context;
+      return context;
+    }
+    if (lastValidNotebookContext) return { ...lastValidNotebookContext, compatibilityError: null };
+    const folder = await selectedFolderSummary();
+    if (folder) {
+      const context: JoplinViewContext = {
+        viewScope: 'notebook',
+        folder,
+        key: `notebook:${folder.id}`,
+        compatibilityError: null,
+      };
+      lastValidNotebookContext = context;
+      return context;
+    }
+  } catch {
+    // Ignore malformed internal settings and use the public folder fallback.
+  }
+  return null;
+}
+
 async function selectedNoteId(): Promise<string | null> {
   try {
     const noteIds = await joplin.workspace.selectedNoteIds();
@@ -1928,7 +2324,33 @@ async function listNotebookNotes(notebookId: string): Promise<NoteSummary[]> {
     const items = Array.isArray(response.items) ? response.items : [];
     for (const item of items) {
       const note = normalizeNote(item);
-      if (note) output.push(note);
+      if (note && !note.deleted_time && !note.is_conflict) output.push(note);
+    }
+
+    if (!response.has_more) break;
+    page += 1;
+  }
+
+  return output;
+}
+
+async function listAllNotes(): Promise<NoteSummary[]> {
+  const output: NoteSummary[] = [];
+  let page = 1;
+
+  while (true) {
+    const response = await joplin.data.get(['notes'], {
+      fields: noteFields(),
+      order_by: 'user_updated_time',
+      order_dir: 'DESC',
+      page,
+      limit: NOTE_LIST_PAGE_LIMIT,
+    }) as PageResponse<any>;
+
+    const items = Array.isArray(response.items) ? response.items : [];
+    for (const item of items) {
+      const note = normalizeNote(item);
+      if (note && !note.deleted_time && !note.is_conflict) output.push(note);
     }
 
     if (!response.has_more) break;
@@ -1997,7 +2419,7 @@ async function folderCandidates(): Promise<FolderCandidate[]> {
 }
 
 function noteFields(): string[] {
-  return ['id', 'title', 'parent_id', 'user_updated_time', 'updated_time', 'is_todo', 'todo_completed', 'user_data'];
+  return ['id', 'title', 'parent_id', 'user_updated_time', 'updated_time', 'is_todo', 'todo_completed', 'deleted_time', 'is_conflict', 'user_data'];
 }
 
 function normalizeNote(value: any): NoteSummary | null {
@@ -2010,8 +2432,64 @@ function normalizeNote(value: any): NoteSummary | null {
     updated_time: numberValue(value.updated_time),
     is_todo: numberValue(value.is_todo),
     todo_completed: numberValue(value.todo_completed),
+    deleted_time: numberValue(value.deleted_time),
+    is_conflict: numberValue(value.is_conflict),
     user_data: value.user_data ?? value.userData,
+    notebookTitle: '',
+    pageType: 'note',
   };
+}
+
+async function decorateNotes(notes: NoteSummary[]): Promise<void> {
+  const folders = await listFolders();
+  const folderTitles = new Map(folders.map((folder) => [folder.id, folder.title]));
+  for (const note of notes) note.notebookTitle = folderTitles.get(note.parent_id) ?? 'Unknown notebook';
+
+  const candidateIds = await currentWhiteboardCandidateIds();
+  await Promise.all(notes.map(async (note) => {
+    if (!candidateIds.has(note.id)) {
+      note.pageType = 'note';
+      return;
+    }
+
+    const cached = whiteboardTypeCache.get(note.id);
+    if (cached && cached.updatedTime === note.updated_time) {
+      note.pageType = cached.isWhiteboard ? 'whiteboard' : 'note';
+      return;
+    }
+
+    const body = await getNoteBody(note.id);
+    if (body === null) return;
+    const isWhiteboard = isWhiteboardBody(body);
+    whiteboardTypeCache.set(note.id, { updatedTime: note.updated_time, isWhiteboard });
+    whiteboardProbeIds.delete(note.id);
+    note.pageType = isWhiteboard ? 'whiteboard' : 'note';
+  }));
+}
+
+async function currentWhiteboardCandidateIds(): Promise<Set<string>> {
+  if (whiteboardCandidateRevision === panelStateRevision) return whiteboardCandidateIds;
+  try {
+    const candidates = await searchNotes('jsoncanvas');
+    whiteboardCandidateIds = new Set(candidates.map((note) => note.id));
+  } catch (error) {
+    console.warn('Sub-Pages: unable to discover whiteboard notes', error);
+  }
+  for (const [noteId, cached] of whiteboardTypeCache.entries()) {
+    if (cached.isWhiteboard) whiteboardCandidateIds.add(noteId);
+  }
+  for (const noteId of whiteboardProbeIds) whiteboardCandidateIds.add(noteId);
+  whiteboardCandidateRevision = panelStateRevision;
+  return whiteboardCandidateIds;
+}
+
+async function getNoteBody(noteId: string): Promise<string | null> {
+  try {
+    const note = await joplin.data.get(['notes', noteId], { fields: ['id', 'body'] });
+    return typeof note?.body === 'string' ? note.body : null;
+  } catch {
+    return null;
+  }
 }
 
 async function uniquePageTitle(notebookId: string, baseTitle: string): Promise<string> {
@@ -2255,7 +2733,6 @@ async function userDataExists(noteId: string, key: string): Promise<boolean> {
 
 async function externalParentRepairReasons(
   notes: NoteSummary[],
-  notebookId: string,
   noteMap: Map<string, NoteSummary>,
   metaMap: Map<string, HierarchyMeta>
 ): Promise<Map<string, string>> {
@@ -2273,7 +2750,7 @@ async function externalParentRepairReasons(
     const parent = parentCache.get(parentId);
     if (!parent) {
       output.set(note.id, 'Missing parent');
-    } else if (parent.parent_id !== notebookId) {
+    } else if (parent.parent_id !== note.parent_id) {
       output.set(note.id, 'Parent is in another notebook');
     } else {
       output.set(note.id, 'Parent is unavailable');
@@ -2283,26 +2760,25 @@ async function externalParentRepairReasons(
   return output;
 }
 
-function hasParentCycle(noteId: string, metaMap: Map<string, HierarchyMeta>, noteMap: Map<string, NoteSummary>): boolean {
-  const seen = new Set<string>();
-  let currentId: string | null = noteId;
-
-  while (currentId) {
-    const parentId = metaMap.get(currentId)?.parentId ?? null;
-    if (!parentId || !noteMap.has(parentId)) return false;
-    if (parentId === noteId || seen.has(parentId)) return true;
-    seen.add(parentId);
-    currentId = parentId;
+function cycleAffectedNoteIds(
+  notes: NoteSummary[],
+  metaMap: Map<string, HierarchyMeta>,
+  noteMap: Map<string, NoteSummary>
+): Set<string> {
+  const parentById = new Map<string, string | null>();
+  for (const note of notes) {
+    const parentId = metaMap.get(note.id)?.parentId ?? null;
+    parentById.set(note.id, parentId && noteMap.has(parentId) ? parentId : null);
   }
-
-  return false;
+  return parentCycleAffectedIds(notes.map((note) => note.id), parentById);
 }
 
 function orderChildIdsForRepair(storedChildIds: string[], actualChildIds: string[], noteMap: Map<string, NoteSummary>): string[] {
   const actualSet = new Set(actualChildIds);
   const output = storedChildIds.filter((id) => actualSet.has(id));
+  const outputSet = new Set(output);
   const missing = actualChildIds
-    .filter((id) => !output.includes(id))
+    .filter((id) => !outputSet.has(id))
     .sort((a, b) => compareNotesByTitle(noteMap.get(a), noteMap.get(b)));
 
   return [...output, ...missing];
@@ -2316,6 +2792,24 @@ async function panelSortMode(): Promise<PanelSortMode> {
     // Use default below.
   }
   return 'recentGroups';
+}
+
+async function getAiIndexStatusSafe(): Promise<AiIndexStatus | null> {
+  try {
+    const status = await joplin.ai.getIndexStatus();
+    const state = status?.state;
+    if (!['unavailable', 'disabled', 'preparing', 'indexing', 'ready'].includes(state)) return null;
+    return {
+      ready: !!status.ready,
+      state,
+      modelId: typeof status.modelId === 'string' ? status.modelId : null,
+      notesIndexed: numberValue(status.notesIndexed),
+      totalNotes: numberValue(status.totalNotes),
+    };
+  } catch (error) {
+    console.warn('Sub-Pages: unable to read semantic index status', error);
+    return null;
+  }
 }
 
 async function openNote(noteId: string): Promise<void> {
@@ -2655,6 +3149,20 @@ function sameIds(a: string[], b: string[]): boolean {
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  let timer: any = null;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new Error(`${label} timed out after ${timeoutMs}ms.`)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 function noteTime(note: NoteSummary): number {

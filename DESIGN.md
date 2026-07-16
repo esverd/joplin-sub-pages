@@ -7,17 +7,29 @@ Hierarchy state is stored with Joplin's synced `userData` API:
 - `subPages.parentId`: stored on a child note and points to its parent note.
 - `subPages.childIds`: stored on a parent note and preserves child order.
 
-Notes are the only tree nodes. A note can contain content and any number of child notes, including descendants at arbitrary depth. Cross-notebook parent relationships are not supported in v1.
+Joplin notes are the only tree nodes. This includes whiteboards, which Joplin stores as notes with a fenced `jsoncanvas` body. A page can contain any number of child pages, including descendants at arbitrary depth. Parent relationships must stay within one notebook.
 
 The plugin does not generate extra notes or sidecar files. A note only gets Sub-Pages user data when it is part of a hierarchy relationship: children store `subPages.parentId`, and parents with ordered direct children store `subPages.childIds`.
 
+## View Scope
+
+The panel follows either the active notebook or Joplin's **All Notes** smart filter. Joplin 3.7.9 does not expose that note-list parent through the public plugin API, so the plugin keeps the version-specific state access in `activeJoplinViewContext`. It reads the main-window Redux state through the plugin sandbox, uses the internal `notesParent` setting as a fallback and change token, and fails closed with a compatibility warning when the state cannot be classified.
+
+Notebook mode loads one notebook. **All Notes** mode loads all non-deleted, non-conflict notes and builds one combined forest. It does not add synthetic notebook nodes or allow cross-notebook hierarchy: a saved parent in another notebook is rendered as an invalid root relationship and offered to the repair path. Root rows carry a notebook label so similarly named roots remain distinguishable.
+
+Creating a root page or whiteboard in **All Notes** requires choosing its destination notebook. Creating a child always uses the parent's notebook. Parent selection, drag/drop, and hierarchy validation continue to enforce the same-notebook invariant.
+
 ## Rendering
 
-The plugin renders a custom `joplin.views.panels` webview. The panel is scoped to the currently selected notebook and keeps hierarchy independent from Joplin's native note-list sorting.
+The plugin renders a custom `joplin.views.panels` webview. The panel reflects the current view scope and keeps hierarchy independent from Joplin's native note-list sorting.
 
 The panel row menu is also rendered inside this webview. Joplin's desktop note-list context menu is built by the native React/Electron note-list component and is not exposed to plugin webviews as an enumerable or reusable menu. For that reason, the panel menu delegates a curated set of common note-list actions to known Joplin commands, but it does not automatically inherit context-menu entries registered by other plugins. Third-party plugin menu items continue to work in Joplin's native note list, and Sub-Pages registers its own native note-list context-menu actions there. The panel includes a command palette bridge that first selects the target note, then opens Joplin's command palette so native and plugin commands can still be reached without cloning every context-menu item.
 
-Panel search uses Joplin's own search endpoint rather than a local title-only filter. Search can be scoped to the selected notebook or all notebooks. Results from the current notebook are shown in the hierarchy, while matches from other notebooks are shown as a separate flat section that opens the native note when selected.
+Panel search uses Joplin's search endpoint rather than a local title-only filter. Keyword and semantic rankings are merged with reciprocal-rank fusion, de-duplicated by note ID, and ordered by the merged score with update time and title as deterministic tie-breakers.
+
+The semantic query is attempted when Joplin reports its AI index as ready or indexing. Indexing progress is shown because results may still be incomplete. Disabled, unavailable, or preparing index states use keyword-only results, and a semantic API failure degrades to keyword search instead of failing the whole query.
+
+In notebook mode, keyword and semantic search can be scoped to that notebook or all notebooks. Results from the current notebook are shown in the hierarchy, while all-notebooks matches from elsewhere appear in a separate flat section that opens the native note when selected. In **All Notes** mode, both search sources cover all notes, the scope control is fixed to **All Notes**, and no external-results section is needed.
 
 Panel search keeps the last completed result set visible while a new query is debounced. This avoids replacing the whole tree on every keystroke; the panel only re-renders the result list when Joplin returns the next search response.
 
@@ -37,7 +49,13 @@ The panel also supports hierarchy drag/drop inside the custom webview. Dropping 
 
 Collapse state is local panel state. It is not stored in synced note metadata.
 
-Tree refreshes are intentionally coarse-grained. Startup, explicit refresh, settings changes, and Sub-Pages write commands rebuild the tree. Note selection changes only update the highlight, and sync completion does not trigger a full tree rebuild.
+Tree refreshes are intentionally coarse-grained. Startup, explicit refresh, settings changes, sync completion, and Sub-Pages write commands rebuild the tree. Ordinary note selection changes only update the highlight unless the active notebook or view scope changed.
+
+## Whiteboards
+
+A new whiteboard is created as a regular Joplin note with Joplin's empty fenced `jsoncanvas` document. Existing whiteboards are identified by first finding `jsoncanvas` search candidates and then validating the note body; the result is cached against the note update time. This avoids loading every note body during a normal panel refresh.
+
+Whiteboards use the same hierarchy metadata and operations as other pages. They can be roots, parents, children, drag/drop targets, search results, and branch-move members. The panel distinguishes them with a whiteboard icon but opens them through Joplin's normal note-opening path.
 
 ## Ordering
 
@@ -51,7 +69,7 @@ Parents always render above descendants.
 
 ## Cleanup
 
-The plugin does not automatically repair metadata on startup or sync completion. The manual repair command:
+The plugin does not automatically repair metadata on startup or sync completion. The manual repair command operates on the selected notebook or every notebook in **All Notes** and:
 
 - prunes missing children from parent lists
 - promotes orphaned children when their parent is gone

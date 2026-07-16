@@ -32,6 +32,8 @@
     plus: '<svg viewBox="0 0 16 16"><path d="M8 3v10M3 8h10"/></svg>',
     refresh: '<svg viewBox="0 0 16 16"><path d="M13 6A5 5 0 1 0 14 9M13 6V2h-4"/></svg>',
     repair: '<svg viewBox="0 0 16 16"><path d="M10.8 2.3a3.2 3.2 0 0 0-4 4L2.8 10.3a1.7 1.7 0 0 0 2.4 2.4l4-4a3.2 3.2 0 0 0 4-4l-2 2-2-2 2-2Z"/></svg>',
+    whiteboard: '<svg viewBox="0 0 16 16"><rect x="2.5" y="2.5" width="11" height="11" rx="1"/><circle cx="5.5" cy="6" r="1"/><circle cx="10.5" cy="10" r="1"/><path d="m6.4 6.8 3.2 2.4"/></svg>',
+    whiteboardPlus: '<svg viewBox="0 0 16 16"><rect x="2.5" y="2.5" width="11" height="11" rx="1"/><path d="M8 5v6M5 8h6"/></svg>',
   };
 
   function post(name, payload) {
@@ -60,6 +62,7 @@
     if (response.state) {
       if (typeof response.revision === 'number') stateRevision = response.revision;
       currentState = response.state;
+      normalizeSearchScopeForView();
       statusText = response.message || '';
       syncPanelSelectionToSelectedNote();
       prunePanelSelection();
@@ -150,12 +153,20 @@
     root.appendChild(renderHeader());
     root.appendChild(renderSearch());
 
+    if (currentState.compatibilityError && !currentState.error) {
+      const warning = element('div', { className: 'sub-pages-compatibility-warning', role: 'status' }, [
+        `Compatibility warning: ${currentState.compatibilityError}`,
+      ]);
+      warning.setAttribute('aria-live', 'polite');
+      root.appendChild(warning);
+    }
+
     if (currentState.error) {
       root.appendChild(element('div', { className: 'sub-pages-empty' }, [currentState.error]));
     } else {
       const search = currentSearch();
       const visibleNodes = filteredRootNodes(search);
-      const externalResults = search.active ? search.externalResults : [];
+      const externalResults = search.active && !isAllNotesView() ? search.externalResults : [];
       const showRootDropArea = !search.active && currentState.nodes.length;
 
       if (currentState.nodes.length && visibleNodes.length) {
@@ -203,20 +214,30 @@
   }
 
   function renderHeader() {
-    const folderTitle = currentState.folder ? currentState.folder.title : 'Sub-Pages';
+    const allNotes = isAllNotesView();
+    const folderTitle = allNotes ? 'All Notes' : (currentState.folder ? currentState.folder.title : 'Sub-Pages');
     const repairCount = Number(currentState.repairCount || 0);
     const header = element('div', { className: 'sub-pages-header' });
     const titleWrap = element('div', { className: 'sub-pages-title-wrap' });
 
     const actions = element('div', { className: 'sub-pages-header-actions' });
     actions.appendChild(iconButton('createRoot', null, 'plus', 'Create root page', false, 'sub-pages-icon-button'));
+    actions.appendChild(iconButton('createRootWhiteboard', null, 'whiteboardPlus', 'Create root whiteboard', false, 'sub-pages-icon-button'));
     if (repairCount > 0) {
       actions.appendChild(iconButton('repair', null, 'repair', `Repair ${repairCount} metadata issue${repairCount === 1 ? '' : 's'}`, false, 'sub-pages-icon-button'));
     }
     actions.appendChild(iconButton('refresh', null, 'refresh', 'Refresh tree', false, 'sub-pages-icon-button'));
     header.appendChild(actions);
 
-    titleWrap.appendChild(element('div', { className: 'sub-pages-heading' }, [folderTitle]));
+    titleWrap.appendChild(element('div', { className: 'sub-pages-heading', title: folderTitle }, [folderTitle]));
+    if (allNotes) {
+      const itemCount = Number.isFinite(Number(currentState.noteCount))
+        ? Number(currentState.noteCount)
+        : countTreeNodes(currentState.nodes);
+      titleWrap.appendChild(element('div', { className: 'sub-pages-context' }, [
+        `${itemCount} item${itemCount === 1 ? '' : 's'} across notebooks`,
+      ]));
+    }
     header.appendChild(titleWrap);
 
     return header;
@@ -226,15 +247,15 @@
     const search = currentSearch();
     const active = search.active;
     const visibleCount = active ? countVisibleSearchNodes(currentState.nodes, search) : countTreeNodes(currentState.nodes);
-    const externalCount = active ? search.externalResults.length : 0;
+    const externalCount = active && !isAllNotesView() ? search.externalResults.length : 0;
     const wrap = element('div', { className: ['sub-pages-search', active ? 'is-active' : ''].filter(Boolean).join(' ') });
 
     const input = element('input', {
       className: 'sub-pages-search-input',
       type: 'search',
       value: searchQuery,
-      placeholder: searchScope === 'all' ? 'Search all notebooks...' : 'Search this notebook...',
-      ariaLabel: 'Search Sub-Pages with Joplin search',
+      placeholder: isAllNotesView() || searchScope === 'all' ? 'Search all notes...' : 'Search this notebook...',
+      ariaLabel: isAllNotesView() ? 'Search all notes' : 'Search Sub-Pages with Joplin search',
       autocomplete: 'off',
     });
     input.dataset.action = 'search';
@@ -247,13 +268,17 @@
     wrap.appendChild(renderSearchScope());
 
     if (active) {
-      const scopeLabel = search.scope === 'all' ? 'All notebooks' : 'This notebook';
+      const allNotes = isAllNotesView();
+      const scopeLabel = allNotes ? 'All Notes' : (search.scope === 'all' ? 'All notebooks' : 'This notebook');
       const shown = visibleCount + externalCount;
       const status = search.loading
-        ? `Searching Joplin (${scopeLabel})...`
-        : `${scopeLabel}: showing ${shown} row${shown === 1 ? '' : 's'} (${visibleCount} in this notebook${search.scope === 'all' ? `, ${externalCount} elsewhere` : ''}).`;
+        ? `Searching ${scopeLabel}...`
+        : allNotes
+          ? `${scopeLabel}: showing ${shown} row${shown === 1 ? '' : 's'} across notebooks.`
+          : `${scopeLabel}: showing ${shown} row${shown === 1 ? '' : 's'} (${visibleCount} in this notebook${search.scope === 'all' ? `, ${externalCount} elsewhere` : ''}).`;
+      const semanticMessage = search.message || semanticIndexMessage(currentState.aiIndexStatus);
       wrap.appendChild(element('div', { className: 'sub-pages-filter-status' }, [
-        search.message ? `${status} ${search.message}` : status,
+        semanticMessage ? `${status} ${semanticMessage}` : status,
       ]));
     }
 
@@ -262,17 +287,74 @@
 
   function renderSearchScope() {
     const group = element('div', { className: 'sub-pages-search-scope', role: 'group', ariaLabel: 'Search scope' });
-    [
-      { value: 'all', label: 'All' },
-      { value: 'notebook', label: 'Notebook' },
-    ].forEach((scope) => {
-      const button = actionButton('setSearchScope', null, scope.label, `Search ${scope.value === 'all' ? 'all notebooks' : 'this notebook'}`, false, 'sub-pages-scope-button');
+    const scopes = isAllNotesView()
+      ? [{ value: 'all', label: 'All Notes' }]
+      : [
+        { value: 'all', label: 'All' },
+        { value: 'notebook', label: 'Notebook' },
+      ];
+    scopes.forEach((scope) => {
+      const scopeTitle = isAllNotesView()
+        ? 'Search all notes'
+        : `Search ${scope.value === 'all' ? 'all notebooks' : 'this notebook'}`;
+      const button = actionButton('setSearchScope', null, scope.label, scopeTitle, false, 'sub-pages-scope-button');
       button.dataset.scope = scope.value;
       button.setAttribute('aria-pressed', searchScope === scope.value ? 'true' : 'false');
       if (searchScope === scope.value) button.classList.add('is-active');
       group.appendChild(button);
     });
     return group;
+  }
+
+  function isAllNotesView() {
+    return !!(currentState && currentState.viewScope === 'all');
+  }
+
+  function normalizeSearchScopeForView() {
+    if (!isAllNotesView() || searchScope === 'all') return;
+    searchScope = 'all';
+    resetSearchState();
+  }
+
+  function semanticIndexMessage(status) {
+    if (!status || status.ready === true || status.state === 'ready') return '';
+
+    const state = String(status.state || '').toLocaleLowerCase();
+    const indexed = Number(status.notesIndexed);
+    const total = Number(status.totalNotes);
+    const hasProgress = Number.isFinite(indexed) && Number.isFinite(total) && total > 0;
+
+    if (state === 'indexing' || (hasProgress && indexed < total)) {
+      const progress = hasProgress ? ` (${indexed} of ${total} notes)` : '';
+      return `Semantic index is building${progress}; results may be incomplete.`;
+    }
+    if (state === 'preparing') return 'Semantic search is preparing; showing keyword results for now.';
+    if (state === 'disabled') return 'Semantic search is off; showing keyword results.';
+    if (state === 'unavailable' || state === 'error' || status.ready === false) {
+      return 'Semantic search is unavailable; showing keyword results.';
+    }
+
+    return '';
+  }
+
+  function renderPageTitle(note, search) {
+    const whiteboard = note.pageType === 'whiteboard';
+    const displayTitle = note.title || (whiteboard ? 'Untitled whiteboard' : 'Untitled page');
+    const title = actionButton('openNote', note.id, '', displayTitle);
+    title.classList.add('sub-pages-note-title');
+    title.setAttribute('aria-label', `Open ${whiteboard ? 'whiteboard' : 'page'} ${displayTitle}`);
+
+    if (whiteboard) {
+      const typeIcon = iconElement('whiteboard');
+      typeIcon.classList.add('sub-pages-page-type-icon');
+      title.appendChild(typeIcon);
+    }
+
+    const titleText = element('span', { className: 'sub-pages-note-title-text' });
+    appendHighlightedTitle(titleText, displayTitle, search.normalizedQuery);
+    title.appendChild(titleText);
+    if (note.isTodo) title.classList.add(note.todoCompleted ? 'is-done' : 'is-todo');
+    return title;
   }
 
   function renderNode(node, depth, container, search) {
@@ -288,6 +370,8 @@
         node.repairReason ? 'needs-repair' : '',
         depth > 0 ? 'is-child' : 'is-root',
         hasNodeChildren(node) ? 'has-children' : '',
+        node.pageType === 'whiteboard' ? 'is-whiteboard' : '',
+        isAllNotesView() && depth === 0 ? 'has-notebook-label' : '',
       ].filter(Boolean).join(' '),
       role: 'treeitem',
       ariaLevel: String(depth + 1),
@@ -311,11 +395,15 @@
       main.appendChild(element('span', { className: 'sub-pages-spacer' }));
     }
 
-    const title = actionButton('openNote', node.id, '', `Open ${node.title || 'Untitled page'}`);
-    title.classList.add('sub-pages-note-title');
-    appendHighlightedTitle(title, node.title || 'Untitled page', search.normalizedQuery);
-    if (node.isTodo) title.classList.add(node.todoCompleted ? 'is-done' : 'is-todo');
-    main.appendChild(title);
+    main.appendChild(renderPageTitle(node, search));
+
+    if (isAllNotesView() && depth === 0) {
+      const notebookTitle = node.notebookTitle || 'Unknown notebook';
+      main.appendChild(element('span', {
+        className: 'sub-pages-notebook-label sub-pages-root-notebook-label',
+        title: `Notebook: ${notebookTitle}`,
+      }, [notebookTitle]));
+    }
 
     if (node.repairReason) {
       main.appendChild(element('span', { className: 'sub-pages-badge', title: node.repairReason }, ['Needs repair']));
@@ -359,6 +447,7 @@
       className: [
         'sub-pages-row',
         'sub-pages-external-row',
+        note.pageType === 'whiteboard' ? 'is-whiteboard' : '',
         note.id === currentState.selectedNoteId ? 'is-selected' : '',
         panelSelectedIds.has(note.id) ? 'is-panel-selected' : '',
       ].filter(Boolean).join(' '),
@@ -372,11 +461,7 @@
     const main = element('div', { className: 'sub-pages-row-main' });
     main.appendChild(element('span', { className: 'sub-pages-spacer' }));
 
-    const title = actionButton('openNote', note.id, '', `Open ${note.title || 'Untitled page'}`);
-    title.classList.add('sub-pages-note-title');
-    appendHighlightedTitle(title, note.title || 'Untitled page', search.normalizedQuery);
-    if (note.isTodo) title.classList.add(note.todoCompleted ? 'is-done' : 'is-todo');
-    main.appendChild(title);
+    main.appendChild(renderPageTitle(note, search));
 
     main.appendChild(element('span', {
       className: 'sub-pages-notebook-label',
@@ -510,9 +595,10 @@
     if (!noteId) return null;
 
     if (row.dataset.dragScope === 'external') {
+      const externalResult = findExternalSearchResult(noteId);
       return {
         noteId,
-        sourceFolderId: findExternalSearchResult(noteId)?.parentId || null,
+        sourceFolderId: externalResult?.notebookId || externalResult?.parentId || null,
         branchRoots: [{ id: noteId }],
         branchRootIds: [noteId],
         noteIds: [noteId],
@@ -534,9 +620,21 @@
 
     if (!noteIds.size) noteIds.add(noteId);
 
+    const branchNotebookIds = new Set();
+    let hasUnknownBranchNotebook = false;
+    branchRootIds.forEach((rootId) => {
+      const rootNode = findNodeById(currentState.nodes, rootId);
+      const notebookId = rootNode?.notebookId || (currentState.folder ? currentState.folder.id : null);
+      if (notebookId) branchNotebookIds.add(notebookId);
+      else hasUnknownBranchNotebook = true;
+    });
+    const sourceFolderId = !hasUnknownBranchNotebook && branchNotebookIds.size === 1
+      ? [...branchNotebookIds][0]
+      : null;
+
     return {
       noteId,
-      sourceFolderId: currentState.folder ? currentState.folder.id : null,
+      sourceFolderId,
       branchRoots: branchRootIds.map((rootId) => ({
         id: rootId,
         parentId: parentById.get(rootId) || null,
@@ -561,6 +659,7 @@
     const draggedNode = findNodeById(currentState && currentState.nodes ? currentState.nodes : [], draggedId);
     const targetNode = findNodeById(currentState && currentState.nodes ? currentState.nodes : [], targetId);
     if (!draggedNode || !targetNode) return false;
+    if (draggedNode.notebookId && targetNode.notebookId && draggedNode.notebookId !== targetNode.notebookId) return false;
     return !nodeContains(draggedNode, targetId);
   }
 
@@ -720,7 +819,8 @@
     menu.appendChild(menuButton('saveNoteAsMarkdown', node, 'Save as Markdown...'));
     menu.appendChild(menuButton('showNoteProperties', node, 'Note properties'));
     menu.appendChild(element('div', { className: 'sub-pages-menu-separator' }));
-    menu.appendChild(menuButton('createChild', node, 'Create child'));
+    menu.appendChild(menuButton('createChild', node, 'Create child page'));
+    menu.appendChild(menuButton('createChildWhiteboard', node, 'Create child whiteboard'));
     menu.appendChild(menuButton('move', node, 'Move under...'));
     menu.appendChild(menuButton('promote', node, 'Promote to root', depth <= 0));
     menu.appendChild(menuButton('moveUp', node, 'Move up', !node.canMoveUp));
@@ -1391,7 +1491,7 @@
           noteIds,
           externalResults,
           loading: false,
-          message: response && response.ok === false && response.message ? response.message : '',
+          message: response && typeof response.message === 'string' ? response.message : '',
         };
         renderPreservingSearchFocus();
       })
@@ -1428,7 +1528,9 @@
       id: value.id,
       title: typeof value.title === 'string' && value.title.trim() ? value.title : 'Untitled page',
       parentId: typeof value.parentId === 'string' ? value.parentId : '',
+      notebookId: typeof value.notebookId === 'string' ? value.notebookId : (typeof value.parentId === 'string' ? value.parentId : ''),
       notebookTitle: typeof value.notebookTitle === 'string' && value.notebookTitle.trim() ? value.notebookTitle : 'Other notebook',
+      pageType: value.pageType === 'whiteboard' ? 'whiteboard' : 'note',
       isTodo: !!value.isTodo,
       todoCompleted: !!value.todoCompleted,
       updatedTime: typeof value.updatedTime === 'number' ? value.updatedTime : 0,
@@ -1599,6 +1701,7 @@
       if (isRowDragActive()) return;
       if (typeof message.revision === 'number') stateRevision = message.revision;
       currentState = message.state;
+      normalizeSearchScopeForView();
       statusText = '';
       syncPanelSelectionToSelectedNote();
       prunePanelSelection();

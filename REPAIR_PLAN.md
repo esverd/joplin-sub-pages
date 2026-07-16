@@ -29,8 +29,8 @@ This plan captures the deep investigation of the Joplin Sub-Pages plugin and tra
 
 - TypeScript passes when run directly with the bundled Node runtime: `tsc --noEmit`.
 - Production packaging succeeds when run directly with local webpack: `webpack --env joplin-plugin-config=buildMain` followed by `webpack --env joplin-plugin-config=createArchive`.
-- There is no `test` script and no unit/integration test files discovered by filename search.
-- Existing UAT assets live in `artifacts/`, but they are not wired into `package.json` or CI-like scripts.
+- `npm test` runs the TypeScript check and pure unit tests in `tests/`.
+- Panel smoke and live Joplin UAT assets are wired as `npm run test:panel` and `npm run test:uat`; both require their documented external desktop/CDP prerequisites.
 
 ## P0: Data Integrity And Core Behavior
 

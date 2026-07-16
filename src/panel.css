@@ -69,9 +69,25 @@ body {
   white-space: nowrap;
 }
 
+.sub-pages-context {
+  color: var(--joplin-color-faded, #666);
+  font-size: 10px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .sub-pages-status {
   color: var(--joplin-color-faded, #666);
   font-size: 11px;
+}
+
+.sub-pages-compatibility-warning {
+  background: var(--joplin-background-color-hover2, rgba(127, 127, 127, 0.08));
+  border-left: 2px solid var(--joplin-warning-color, #9a5b00);
+  color: var(--joplin-color-faded, #666);
+  font-size: 11px;
+  padding: 4px 6px;
 }
 
 .sub-pages-header-actions,
@@ -362,6 +378,20 @@ body {
   white-space: nowrap;
 }
 
+.sub-pages-note-title-text {
+  display: block;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sub-pages-page-type-icon {
+  color: var(--joplin-color-faded, #666);
+  flex: 0 0 14px;
+}
+
 .sub-pages-row.has-children .sub-pages-note-title {
   padding-left: 2px;
 }
@@ -455,6 +485,25 @@ body {
   text-align: right;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.sub-pages-root-notebook-label {
+  background: var(--joplin-background-color-hover2, rgba(127, 127, 127, 0.08));
+  border: 1px solid var(--joplin-divider-color, rgba(127, 127, 127, 0.22));
+  border-radius: 3px;
+  flex: 0 1 auto;
+  line-height: 16px;
+  max-width: min(38%, 16ch);
+  min-width: 0;
+  padding: 0 4px;
+  text-align: left;
+}
+
+.sub-pages-row:hover .sub-pages-root-notebook-label,
+.sub-pages-row:focus-within .sub-pages-root-notebook-label,
+.sub-pages-row.has-open-menu .sub-pages-root-notebook-label {
+  opacity: 0;
+  visibility: hidden;
 }
 
 .sub-pages-note-title.is-todo::before {

@@ -367,7 +367,143 @@ async function main() {
     throw new Error(`Tree keyboard navigation failed: ${JSON.stringify(treeKeys)}`);
   }
 
-  console.log(JSON.stringify({ responsive, search, noResults, bodySearch, notebookScopeSearch, dragPayloads, multiSelect, confirmUnlink, dragDrop, invalidDragDrop, menuKeys, treeKeys }, null, 2));
+  const allNotes = await evalJs(`(async () => {
+    const notebookScope = document.querySelector('button[data-action="setSearchScope"][data-scope="notebook"]');
+    if (!notebookScope) throw new Error('Missing notebook scope before All Notes transition');
+    notebookScope.click();
+    await new Promise(requestAnimationFrame);
+
+    window.mockState = window.mockAllNotesState;
+    window.receive({ name: 'state', revision: 2, state: window.mockAllNotesState });
+    await new Promise(requestAnimationFrame);
+
+    const heading = document.querySelector('.sub-pages-heading')?.textContent?.trim();
+    const context = document.querySelector('.sub-pages-context')?.textContent?.trim();
+    const scopeButtons = [...document.querySelectorAll('.sub-pages-scope-button')].map(button => ({
+      label: button.textContent.trim(),
+      scope: button.dataset.scope,
+      pressed: button.getAttribute('aria-pressed'),
+    }));
+    const notebookLabels = [...document.querySelectorAll('.sub-pages-root-notebook-label')].map(label => label.textContent.trim());
+    const whiteboard = document.querySelector('.sub-pages-row[data-note-id="allboard1"]');
+    const whiteboardTitle = whiteboard?.querySelector('.sub-pages-note-title');
+    const childWhiteboardAction = document.querySelector('.sub-pages-row[data-note-id="allparent1"] [data-action="createChildWhiteboard"]');
+    const rootWhiteboardAction = document.querySelector('.sub-pages-header [data-action="createRootWhiteboard"]');
+    const compatibilityWarning = document.querySelector('.sub-pages-compatibility-warning')?.textContent?.trim();
+
+    window.messages = [];
+    const crossNotebookSource = document.querySelector('.sub-pages-row[data-note-id="allparent1"]');
+    const crossNotebookTarget = document.querySelector('.sub-pages-row[data-note-id="allboard1"]');
+    const crossNotebookData = new DataTransfer();
+    crossNotebookSource?.dispatchEvent(new DragEvent('dragstart', { bubbles: true, cancelable: true, dataTransfer: crossNotebookData }));
+    const crossNotebookDragOver = new DragEvent('dragover', { bubbles: true, cancelable: true, dataTransfer: crossNotebookData });
+    crossNotebookTarget?.dispatchEvent(crossNotebookDragOver);
+    crossNotebookTarget?.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: crossNotebookData }));
+    crossNotebookSource?.dispatchEvent(new DragEvent('dragend', { bubbles: true, cancelable: true, dataTransfer: crossNotebookData }));
+    await new Promise(requestAnimationFrame);
+    const crossNotebookDropMessages = window.messages.filter(message => message.name === 'dropOnNote');
+
+    rootWhiteboardAction?.click();
+    await new Promise(r => setTimeout(r, 50));
+
+    const input = document.querySelector('.sub-pages-search-input');
+    input.focus();
+    input.value = 'canvas';
+    input.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: 'canvas' }));
+    await new Promise(r => setTimeout(r, 650));
+    const searchStatus = document.querySelector('.sub-pages-filter-status')?.textContent?.trim();
+    const searchRows = [...document.querySelectorAll('.sub-pages-row')].map(row => row.dataset.noteId);
+    const externalSection = document.querySelector('.sub-pages-search-results');
+    const searchMessages = window.messages.filter(message => message.name === 'search').map(message => ({
+      query: message.query,
+      scope: message.scope,
+    }));
+    const actionMessages = window.messages.filter(message => message.name === 'createRootWhiteboard');
+
+    return {
+      heading,
+      context,
+      scopeButtons,
+      notebookLabels,
+      whiteboardClass: whiteboard?.classList.contains('is-whiteboard'),
+      whiteboardIcon: !!whiteboard?.querySelector('.sub-pages-page-type-icon'),
+      whiteboardAriaLabel: whiteboardTitle?.getAttribute('aria-label'),
+      whiteboardTooltip: whiteboardTitle?.getAttribute('title'),
+      childWhiteboardAction: !!childWhiteboardAction,
+      rootWhiteboardAction: !!rootWhiteboardAction,
+      compatibilityWarning,
+      crossNotebookDragAccepted: crossNotebookDragOver.defaultPrevented,
+      crossNotebookDropMessages,
+      searchStatus,
+      searchRows,
+      externalSection: !!externalSection,
+      searchMessages,
+      actionMessages,
+      placeholder: document.querySelector('.sub-pages-search-input')?.getAttribute('placeholder'),
+    };
+  })()`);
+
+  if (allNotes.heading !== 'All Notes' || allNotes.context !== '4 items across notebooks') {
+    throw new Error(`All Notes heading/context did not render: ${JSON.stringify(allNotes)}`);
+  }
+  if (JSON.stringify(allNotes.scopeButtons) !== JSON.stringify([{ label: 'All Notes', scope: 'all', pressed: 'true' }])) {
+    throw new Error(`All Notes did not force its single search scope: ${JSON.stringify(allNotes)}`);
+  }
+  if (JSON.stringify(allNotes.notebookLabels) !== JSON.stringify(['Harness', 'Archive', 'Projects'])) {
+    throw new Error(`All Notes roots did not identify their notebooks: ${JSON.stringify(allNotes)}`);
+  }
+  if (!allNotes.whiteboardClass || !allNotes.whiteboardIcon || !allNotes.whiteboardAriaLabel?.includes('whiteboard Archive Canvas') || allNotes.whiteboardTooltip !== 'Archive Canvas') {
+    throw new Error(`Whiteboard row affordance did not render: ${JSON.stringify(allNotes)}`);
+  }
+  if (!allNotes.rootWhiteboardAction || !allNotes.childWhiteboardAction || allNotes.actionMessages.length !== 1) {
+    throw new Error(`Whiteboard creation actions did not render or dispatch: ${JSON.stringify(allNotes)}`);
+  }
+  if (!allNotes.compatibilityWarning?.includes('private sidebar adapter')) {
+    throw new Error(`All Notes compatibility warning did not render: ${JSON.stringify(allNotes)}`);
+  }
+  if (allNotes.crossNotebookDragAccepted || allNotes.crossNotebookDropMessages.length) {
+    throw new Error(`All Notes accepted a cross-notebook hierarchy drop: ${JSON.stringify(allNotes)}`);
+  }
+  if (!allNotes.searchRows.includes('allboard1') || allNotes.searchRows.length !== 1 || allNotes.externalSection) {
+    throw new Error(`All Notes search did not stay within the combined forest: ${JSON.stringify(allNotes)}`);
+  }
+  if (!allNotes.searchStatus?.includes('Semantic search is off; showing keyword results.')) {
+    throw new Error(`Semantic keyword-fallback status did not render: ${JSON.stringify(allNotes)}`);
+  }
+  if (!allNotes.searchMessages.some(message => message.query === 'canvas' && message.scope === 'all') || allNotes.placeholder !== 'Search all notes...') {
+    throw new Error(`All Notes search did not use the all-notes contract: ${JSON.stringify(allNotes)}`);
+  }
+
+  await evalJs(`(() => {
+    document.querySelector('.sub-pages-clear-search')?.click();
+  })()`);
+  await new Promise(r => setTimeout(r, 50));
+
+  const allNotesResponsive = [];
+  for (const width of widths) {
+    await setViewport(width);
+    allNotesResponsive.push(await evalJs(`(() => {
+      const actionRects = [...document.querySelectorAll('.sub-pages-header-actions .sub-pages-icon-button')]
+        .map(button => button.getBoundingClientRect());
+      return {
+        width: innerWidth,
+        docClient: document.documentElement.clientWidth,
+        bodyScroll: document.body.scrollWidth,
+        actionsLeft: actionRects.length ? Math.min(...actionRects.map(rect => rect.left)) : null,
+        actionsRight: actionRects.length ? Math.max(...actionRects.map(rect => rect.right)) : null,
+      };
+    })()`));
+  }
+  const allNotesLayoutFailures = allNotesResponsive.filter(result => (
+    result.bodyScroll > result.docClient + 1
+    || result.actionsLeft < 0
+    || result.actionsRight > result.docClient + 1
+  ));
+  if (allNotesLayoutFailures.length) {
+    throw new Error(`Responsive All Notes header layout failed: ${JSON.stringify(allNotesLayoutFailures)}`);
+  }
+
+  console.log(JSON.stringify({ responsive, search, noResults, bodySearch, notebookScopeSearch, dragPayloads, multiSelect, confirmUnlink, dragDrop, invalidDragDrop, menuKeys, treeKeys, allNotes, allNotesResponsive }, null, 2));
   cdp.close();
 }
 

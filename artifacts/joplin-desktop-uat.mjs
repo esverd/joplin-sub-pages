@@ -7,6 +7,7 @@ const cdpPort = Number(process.env.JOPLIN_CDP_PORT || 18900);
 const NOTE_MODEL_TYPE = 1;
 const PARENT_ID_KEY = 'subPages.parentId';
 const CHILD_IDS_KEY = 'subPages.childIds';
+const EMPTY_WHITEBOARD_BODY = '```jsoncanvas\n{\n\t"nodes": [],\n\t"edges": []\n}\n```';
 
 function getJson(requestPath) {
   return new Promise((resolve, reject) => {
@@ -216,6 +217,15 @@ async function main() {
     `, { folderId });
   }
 
+  async function openAllNotes() {
+    return evalJs(mainCdp, `(() => {
+      const item = document.querySelector('.all-notes .list-item');
+      if (!item) return { ok: false, message: 'All Notes sidebar item was not found.' };
+      item.click();
+      return { ok: true, label: item.textContent.trim() };
+    })()`);
+  }
+
   async function renameNote(noteId, title, body) {
     await pluginEval(`
       await joplin.data.put(['notes', arg.noteId], null, {
@@ -241,6 +251,22 @@ async function main() {
     assert(noteId, 'Create child did not return the created note as selected.', response);
     await renameNote(noteId, title, body);
     await waitForState(`child "${title}"`, state => nodeParentId(state, noteId) === parentId && findNode(state.nodes, noteId)?.title === title);
+    return noteId;
+  }
+
+  async function createWhiteboard(action, title, parentId = null) {
+    const response = await panelPost({ name: action, ...(parentId ? { noteId: parentId } : {}) });
+    const noteId = response.state?.selectedNoteId;
+    assert(noteId, `${action} did not return the created whiteboard as selected.`, response);
+    const note = await pluginEval(`
+      await joplin.data.put(['notes', arg.noteId], null, { title: arg.title });
+      return await joplin.data.get(['notes', arg.noteId], { fields: ['id', 'title', 'body', 'parent_id'] });
+    `, { noteId, title });
+    assert(note.body === EMPTY_WHITEBOARD_BODY, `${action} did not create Joplin's canonical empty whiteboard body.`, note);
+    await waitForState(`whiteboard "${title}"`, state => {
+      const node = findNode(state.nodes, noteId);
+      return node?.title === title && node.pageType === 'whiteboard' && (!parentId || node.parentId === parentId);
+    });
     return noteId;
   }
 
@@ -367,9 +393,50 @@ async function main() {
     const parentB = await createRoot(`Codex UAT Parent B ${suffix}`, `Parent B body ${token}`);
     const childOne = await createChild(parentA, `Codex UAT Child One ${suffix}`, `Child one body ${token}`);
     const childTwo = await createChild(parentA, `Codex UAT Child Two ${suffix}`, `Child two body ${token}`);
+    const rootWhiteboard = await createWhiteboard('createRootWhiteboard', `Codex UAT Whiteboard ${suffix}`);
+    const childWhiteboard = await createWhiteboard('createChildWhiteboard', `Codex UAT Child Whiteboard ${suffix}`, rootWhiteboard);
     state = await getState();
     assert(nodeParentId(state, childOne) === parentA && nodeParentId(state, childTwo) === parentA, 'Child creation did not link both notes under Parent A.', state);
-    record('created roots and children through panel actions', { parentA, parentB, childOne, childTwo });
+    assert(nodeParentId(state, childWhiteboard) === rootWhiteboard && findNode(state.nodes, rootWhiteboard)?.pageType === 'whiteboard', 'Whiteboard hierarchy state was not preserved.', state);
+    record('created roots, children, and whiteboards through panel actions', { parentA, parentB, childOne, childTwo, rootWhiteboard, childWhiteboard });
+
+    const targetNoteTitle = `Codex UAT Other Notebook ${suffix}`;
+    const targetNote = await pluginEval(`
+      return await joplin.data.post(['notes'], null, {
+        parent_id: arg.folderId,
+        title: arg.title,
+        body: arg.body,
+      });
+    `, {
+      folderId: targetFolderId,
+      title: targetNoteTitle,
+      body: `Other notebook body ${token}`,
+    });
+    assert(targetNote?.id, 'Could not create the cross-notebook All Notes fixture.', targetNote);
+    const allNotesOpen = await openAllNotes();
+    assert(allNotesOpen.ok, 'Could not select All Notes in Joplin.', allNotesOpen);
+    state = await waitForState('All Notes view', current => (
+      current.viewScope === 'all'
+      && current.folder === null
+      && !!findNode(current.nodes, parentA)
+      && !!findNode(current.nodes, targetNote.id)
+    ), 20000);
+    assert(findNode(state.nodes, parentA)?.notebookId === sourceFolderId, 'All Notes did not retain the source root notebook identity.', state);
+    assert(findNode(state.nodes, targetNote.id)?.notebookId === targetFolderId, 'All Notes did not retain the target root notebook identity.', state);
+    const searchDeadline = Date.now() + 15000;
+    let allNotesSearch = null;
+    while (Date.now() < searchDeadline) {
+      await panelPost({ name: 'refresh' });
+      allNotesSearch = await panelPost({ name: 'search', query: targetNoteTitle, scope: 'notebook' });
+      if ((allNotesSearch.noteIds || []).includes(targetNote.id)) break;
+      await delay(400);
+    }
+    assert(allNotesSearch.scope === 'all' && (allNotesSearch.noteIds || []).includes(targetNote.id), 'All Notes search did not force the combined all-notes scope.', allNotesSearch);
+    record('verified native All Notes mirroring and combined search', { itemCount: state.noteCount });
+
+    const reopenSource = await openFolder(sourceFolderId);
+    assert(reopenSource.ok, 'Could not restore the temporary source notebook after All Notes.', reopenSource);
+    state = await waitForState('source notebook after All Notes', current => current.viewScope === 'notebook' && current.folder?.id === sourceFolderId);
 
     await pluginEval(`
       await joplin.data.userDataSet(${NOTE_MODEL_TYPE}, arg.parentId, '${CHILD_IDS_KEY}', [arg.childOne]);
