@@ -120,6 +120,14 @@ async function main() {
       const externalTreeRect = externalTree?.getBoundingClientRect();
       const externalHeadingRect = externalHeading?.getBoundingClientRect();
       const lastLocalRowRect = localRows[localRows.length - 1]?.getBoundingClientRect();
+      const rowAppearance = (row) => {
+        const title = row?.querySelector('.sub-pages-note-title');
+        return row ? {
+          fontSize: title ? getComputedStyle(title).fontSize : null,
+          paddingTop: getComputedStyle(row).paddingTop,
+          paddingBottom: getComputedStyle(row).paddingBottom,
+        } : null;
+      };
       const rowsAreOrdered = (rows) => rows.every((row, index) => {
         const rect = row.getBoundingClientRect();
         return rect.height >= 19 && (!index || rect.top >= rows[index - 1].getBoundingClientRect().bottom - 1);
@@ -138,6 +146,8 @@ async function main() {
         externalRowsInOrder: rowsAreOrdered(externalRows),
         localRowMinHeight: minimumRowHeight(localRows),
         externalRowMinHeight: minimumRowHeight(externalRows),
+        localRowAppearance: rowAppearance(localRows[0]),
+        externalRowAppearance: rowAppearance(externalRows[0]),
         listHeight: listRect?.height,
         localTreeHeight: localTreeRect?.height,
         treeToExternalGap: externalRect && localTreeRect ? externalRect.top - localTreeRect.bottom : null,
@@ -229,6 +239,97 @@ async function main() {
     throw new Error(`Responsive row action layout failed: ${JSON.stringify(layoutFailures)}`);
   }
 
+  const appearanceUpdate = await evalJs(`(async () => {
+    const originalState = window.mockNotebookState;
+    const baselineState = {
+      ...originalState,
+      appearance: { noteTextSize: 18, rowSpacing: 0 },
+    };
+    const updatedState = {
+      ...originalState,
+      appearance: { noteTextSize: 18, rowSpacing: 12 },
+    };
+    const staleState = {
+      ...originalState,
+      appearance: { noteTextSize: 10, rowSpacing: 0 },
+    };
+    const originalPostMessage = window.webviewApi.postMessage;
+    const readAppearance = () => {
+      const row = document.querySelector('.sub-pages-row[data-note-id="child1"]');
+      const title = row?.querySelector('.sub-pages-note-title');
+      const app = document.getElementById('app');
+      return {
+        noteFontSize: title ? getComputedStyle(title).fontSize : null,
+        rowHeight: row?.getBoundingClientRect().height ?? null,
+        rowPaddingTop: row ? getComputedStyle(row).paddingTop : null,
+        rowPaddingBottom: row ? getComputedStyle(row).paddingBottom : null,
+        appNoteFontSize: app?.style.getPropertyValue('--sub-pages-note-font-size') || null,
+        appRowSpacing: app?.style.getPropertyValue('--sub-pages-row-extra-spacing') || null,
+        appRowHalfSpacing: app?.style.getPropertyValue('--sub-pages-row-half-spacing') || null,
+        childConnectorTop: row ? getComputedStyle(row, '::after').top : null,
+      };
+    };
+    let snapshot;
+    try {
+      window.mockState = baselineState;
+      window.receive({ name: 'state', revision: 10, state: baselineState });
+      await new Promise(requestAnimationFrame);
+      const baseline = readAppearance();
+
+      window.mockState = updatedState;
+      window.receive({ name: 'state', revision: 11, state: updatedState });
+      await new Promise(requestAnimationFrame);
+      const updated = readAppearance();
+
+      window.receive({ name: 'state', revision: 10, state: staleState });
+      await new Promise(requestAnimationFrame);
+      const afterStaleMessage = readAppearance();
+
+      window.webviewApi.postMessage = async (message) => {
+        if (message.name === 'refresh') return { ok: true, revision: 10, state: staleState };
+        return originalPostMessage(message);
+      };
+      const refreshButton = document.querySelector('[data-action="refresh"]');
+      if (!refreshButton) throw new Error('Missing panel refresh button');
+      refreshButton.click();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      const afterStaleResponse = readAppearance();
+
+      snapshot = {
+        baseline,
+        updated,
+        afterStaleMessage,
+        afterStaleResponse,
+      };
+    } finally {
+      window.webviewApi.postMessage = originalPostMessage;
+      window.mockState = originalState;
+      window.receive({ name: 'state', revision: 12, state: originalState });
+      await new Promise(requestAnimationFrame);
+      if (snapshot) snapshot.restored = readAppearance();
+    }
+    return snapshot;
+  })()`);
+  if (appearanceUpdate.updated.noteFontSize !== '18px'
+    || appearanceUpdate.updated.appNoteFontSize !== '18px'
+    || appearanceUpdate.updated.appRowSpacing !== '12px'
+    || appearanceUpdate.updated.appRowHalfSpacing !== '6px'
+    || appearanceUpdate.updated.rowPaddingTop !== '6px'
+    || appearanceUpdate.updated.rowPaddingBottom !== '6px'
+    || !Number.isFinite(appearanceUpdate.baseline.rowHeight)
+    || !Number.isFinite(appearanceUpdate.updated.rowHeight)
+    || appearanceUpdate.updated.rowHeight - appearanceUpdate.baseline.rowHeight < 11
+    || appearanceUpdate.updated.childConnectorTop !== '50%'
+    || appearanceUpdate.afterStaleMessage.appNoteFontSize !== '18px'
+    || appearanceUpdate.afterStaleMessage.appRowSpacing !== '12px'
+    || appearanceUpdate.afterStaleResponse.appNoteFontSize !== '18px'
+    || appearanceUpdate.afterStaleResponse.appRowSpacing !== '12px'
+    || appearanceUpdate.restored.appNoteFontSize !== '12px'
+    || appearanceUpdate.restored.appRowSpacing !== '0px'
+    || appearanceUpdate.restored.appRowHalfSpacing !== '0px') {
+    throw new Error(`Panel appearance settings did not update safely: ${JSON.stringify(appearanceUpdate)}`);
+  }
+
   await setViewport(360);
   const search = await evalJs(`(async () => {
     const input = document.querySelector('.sub-pages-search-input');
@@ -290,16 +391,19 @@ async function main() {
       const allScope = document.querySelector('button[data-action="setSearchScope"][data-scope="all"]');
       if (allScope && allScope.getAttribute('aria-pressed') !== 'true') allScope.click();
       await new Promise(requestAnimationFrame);
-      const hasOriginalNodes = Array.isArray(window.__searchLayoutOriginalNodes);
-      const hasOriginalExternalNotes = Array.isArray(window.__searchLayoutOriginalExternalNotes);
-      if (hasOriginalNodes) window.mockNotebookState.nodes = window.__searchLayoutOriginalNodes;
-      if (hasOriginalExternalNotes) window.mockExternalNotes = window.__searchLayoutOriginalExternalNotes;
-      if (hasOriginalNodes || hasOriginalExternalNotes) {
-        window.mockState = window.mockNotebookState;
-        window.receive({ name: 'state', revision: 4, state: window.mockNotebookState });
-      }
-      delete window.__searchLayoutOriginalNodes;
-      delete window.__searchLayoutOriginalExternalNotes;
+       const hasOriginalNodes = Array.isArray(window.__searchLayoutOriginalNodes);
+       const hasOriginalExternalNotes = Array.isArray(window.__searchLayoutOriginalExternalNotes);
+       const hasOriginalAppearance = !!window.__searchLayoutOriginalAppearance;
+       if (hasOriginalNodes) window.mockNotebookState.nodes = window.__searchLayoutOriginalNodes;
+       if (hasOriginalExternalNotes) window.mockExternalNotes = window.__searchLayoutOriginalExternalNotes;
+       if (hasOriginalAppearance) window.mockNotebookState.appearance = window.__searchLayoutOriginalAppearance;
+       if (hasOriginalNodes || hasOriginalExternalNotes || hasOriginalAppearance) {
+         window.mockState = window.mockNotebookState;
+         window.receive({ name: 'state', revision: 14, state: window.mockNotebookState });
+       }
+       delete window.__searchLayoutOriginalNodes;
+       delete window.__searchLayoutOriginalExternalNotes;
+       delete window.__searchLayoutOriginalAppearance;
       await new Promise(requestAnimationFrame);
     })()`);
   }
@@ -307,10 +411,11 @@ async function main() {
   try {
   await setViewport(360, 220);
   searchLayoutFixtureActive = true;
-  searchFixture = await evalJs(`(async () => {
-    window.__searchLayoutOriginalNodes = window.mockNotebookState.nodes;
-    window.__searchLayoutOriginalExternalNotes = window.mockExternalNotes;
-    window.mockNotebookState.nodes = [
+   searchFixture = await evalJs(`(async () => {
+     window.__searchLayoutOriginalNodes = window.mockNotebookState.nodes;
+     window.__searchLayoutOriginalExternalNotes = window.mockExternalNotes;
+     window.__searchLayoutOriginalAppearance = window.mockNotebookState.appearance;
+     window.mockNotebookState.nodes = [
       ...window.__searchLayoutOriginalNodes,
       ...Array.from({ length: 18 }, (_, index) => ({
         id: 'local-layout-' + index,
@@ -327,7 +432,7 @@ async function main() {
         children: [],
       })),
     ];
-    window.mockExternalNotes = [
+     window.mockExternalNotes = [
       ...window.__searchLayoutOriginalExternalNotes,
       ...Array.from({ length: 12 }, (_, index) => ({
         id: 'external-layout-' + index,
@@ -341,9 +446,10 @@ async function main() {
         updatedTime: 100 + index,
         body: 'external-layout web result',
       })),
-    ];
-    window.mockState = window.mockNotebookState;
-    window.receive({ name: 'state', revision: 3, state: window.mockNotebookState });
+     ];
+     window.mockNotebookState.appearance = { noteTextSize: 18, rowSpacing: 12 };
+     window.mockState = window.mockNotebookState;
+     window.receive({ name: 'state', revision: 13, state: window.mockNotebookState });
     await new Promise(requestAnimationFrame);
     return {
       localFixtureCount: window.mockNotebookState.nodes.length,
@@ -389,6 +495,17 @@ async function main() {
   ));
   if (mixedSearchLayoutFailures.length) {
     throw new Error(`Mixed search results were stretched, squished, or separated from Other notebooks: ${JSON.stringify(mixedSearchLayoutFailures)}`);
+  }
+  const mixedSearchAppearanceFailures = mixedSearchLayouts.filter((searchLayout) => (
+    searchLayout.localRowAppearance?.fontSize !== '18px'
+    || searchLayout.externalRowAppearance?.fontSize !== '18px'
+    || searchLayout.localRowAppearance?.paddingTop !== '6px'
+    || searchLayout.localRowAppearance?.paddingBottom !== '6px'
+    || searchLayout.externalRowAppearance?.paddingTop !== '6px'
+    || searchLayout.externalRowAppearance?.paddingBottom !== '6px'
+  ));
+  if (mixedSearchAppearanceFailures.length) {
+    throw new Error(`Appearance settings did not apply to mixed search results: ${JSON.stringify(mixedSearchAppearanceFailures)}`);
   }
   mixedSearchEnd = await scrollSearchResultToEnd('external');
   if (!mixedSearchEnd.ok || mixedSearchEnd.scrollTop <= 0 || !mixedSearchEnd.lastRowVisible) {
@@ -696,7 +813,7 @@ async function main() {
     await new Promise(requestAnimationFrame);
 
     window.mockState = window.mockAllNotesState;
-    window.receive({ name: 'state', revision: 2, state: window.mockAllNotesState });
+    window.receive({ name: 'state', revision: 15, state: window.mockAllNotesState });
     await new Promise(requestAnimationFrame);
 
     const heading = document.querySelector('.sub-pages-heading')?.textContent?.trim();
@@ -825,7 +942,7 @@ async function main() {
     throw new Error(`Responsive All Notes header layout failed: ${JSON.stringify(allNotesLayoutFailures)}`);
   }
 
-  console.log(JSON.stringify({ responsive, search, noResults, bodySearch, searchFixture, childTransition, pendingChildTransition, externalOnlyTransition, mixedTransition, mixedSearchLayouts, mixedSearchEnd, localOnlyTransition, localOnlyLayout, localOnlyEnd, denseExternalOnlyTransition, externalOnlyLayout, externalOnlyEnd, notebookScopeSearch, dragPayloads, multiSelect, confirmUnlink, dragDrop, invalidDragDrop, menuKeys, treeKeys, allNotes, allNotesResponsive }, null, 2));
+  console.log(JSON.stringify({ responsive, appearanceUpdate, search, noResults, bodySearch, searchFixture, childTransition, pendingChildTransition, externalOnlyTransition, mixedTransition, mixedSearchLayouts, mixedSearchEnd, localOnlyTransition, localOnlyLayout, localOnlyEnd, denseExternalOnlyTransition, externalOnlyLayout, externalOnlyEnd, notebookScopeSearch, dragPayloads, multiSelect, confirmUnlink, dragDrop, invalidDragDrop, menuKeys, treeKeys, allNotes, allNotesResponsive }, null, 2));
   } finally {
     try {
       await cdp.send('Emulation.clearDeviceMetricsOverride');

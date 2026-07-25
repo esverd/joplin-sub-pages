@@ -8,6 +8,49 @@ const WHITEBOARD_FENCE_PATTERN = /^([\s\S]*?)```jsoncanvas[ \t]*\r?\n([\s\S]*?)\
 export type ViewScope = 'notebook' | 'all';
 export type SemanticSearchScope = { type: 'all' } | { type: 'folder'; folderId: string };
 
+export interface PanelAppearance {
+  noteTextSize: number;
+  rowSpacing: number;
+}
+
+export const PANEL_APPEARANCE_DEFAULTS = Object.freeze({
+  noteTextSize: 12,
+  rowSpacing: 0,
+});
+
+export const PANEL_APPEARANCE_LIMITS = Object.freeze({
+  noteTextSize: Object.freeze({ minimum: 10, maximum: 24 }),
+  rowSpacing: Object.freeze({ minimum: 0, maximum: 24 }),
+});
+
+function boundedRoundedInteger(value: unknown, fallback: number, minimum: number, maximum: number): number {
+  const parsed = typeof value === 'number'
+    ? value
+    : typeof value === 'string' && value.trim()
+      ? Number(value)
+      : Number.NaN;
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.min(maximum, Math.max(minimum, Math.round(parsed)));
+}
+
+export function normalizePanelAppearance(value: unknown): PanelAppearance {
+  const appearance = value && typeof value === 'object' ? value as Partial<PanelAppearance> : {};
+  return {
+    noteTextSize: boundedRoundedInteger(
+      appearance.noteTextSize,
+      PANEL_APPEARANCE_DEFAULTS.noteTextSize,
+      PANEL_APPEARANCE_LIMITS.noteTextSize.minimum,
+      PANEL_APPEARANCE_LIMITS.noteTextSize.maximum,
+    ),
+    rowSpacing: boundedRoundedInteger(
+      appearance.rowSpacing,
+      PANEL_APPEARANCE_DEFAULTS.rowSpacing,
+      PANEL_APPEARANCE_LIMITS.rowSpacing.minimum,
+      PANEL_APPEARANCE_LIMITS.rowSpacing.maximum,
+    ),
+  };
+}
+
 export interface ViewClassification {
   viewScope: ViewScope;
   folderId: string | null;

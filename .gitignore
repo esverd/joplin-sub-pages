@@ -1,7 +1,16 @@
-dist/
 node_modules/
-publish/
 .codex
+
+# These are the exact runtime files for Joplin development-plugin installs and
+# the installable package. They are intentionally versioned so a git pull gets
+# the same validated build; other generated output remains ignored.
+dist/*
+!dist/index.js
+!dist/manifest.json
+!dist/panel.css
+!dist/panel.js
+publish/*
+!publish/com.codex.subPages.jpl
 
 # Generated UAT/debug artifacts. Keep the browser smoke harness tracked.
 artifacts/*

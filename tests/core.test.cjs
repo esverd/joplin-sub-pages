@@ -19,6 +19,7 @@ const {
   groupIdsByParent,
   isWhiteboardBody,
   mainWindowStateFromRoot,
+  normalizePanelAppearance,
   parentCycleAffectedIds,
   reciprocalRankScores,
   semanticSearchScope,
@@ -57,6 +58,26 @@ test('semantic search follows the selected panel scope', () => {
   assert.deepEqual(semanticSearchScope('all', 'folder-1'), { type: 'all' });
   assert.deepEqual(semanticSearchScope('notebook', 'folder-1'), { type: 'folder', folderId: 'folder-1' });
   assert.throws(() => semanticSearchScope('notebook', null), /folder is required/i);
+});
+
+test('normalizes panel appearance defaults, bounds, and persisted values', () => {
+  assert.deepEqual(normalizePanelAppearance(null), { noteTextSize: 12, rowSpacing: 0 });
+  assert.deepEqual(normalizePanelAppearance({ noteTextSize: Number.NaN, rowSpacing: 'not a number' }), {
+    noteTextSize: 12,
+    rowSpacing: 0,
+  });
+  assert.deepEqual(normalizePanelAppearance({ noteTextSize: '18.4', rowSpacing: 12.6 }), {
+    noteTextSize: 18,
+    rowSpacing: 13,
+  });
+  assert.deepEqual(normalizePanelAppearance({ noteTextSize: 2, rowSpacing: -5 }), {
+    noteTextSize: 10,
+    rowSpacing: 0,
+  });
+  assert.deepEqual(normalizePanelAppearance({ noteTextSize: 99, rowSpacing: 99 }), {
+    noteTextSize: 24,
+    rowSpacing: 24,
+  });
 });
 
 test('groups a large flat note set by parent in one pass', () => {

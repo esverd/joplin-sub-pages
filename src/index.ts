@@ -4,11 +4,15 @@ import * as path from 'path';
 import {
   ALL_NOTES_FILTER_ID,
   EMPTY_WHITEBOARD_BODY,
+  PANEL_APPEARANCE_DEFAULTS,
+  PANEL_APPEARANCE_LIMITS,
+  PanelAppearance,
   ViewScope,
   classifyJoplinViewState,
   groupIdsByParent,
   isWhiteboardBody,
   mainWindowStateFromRoot,
+  normalizePanelAppearance,
   parentCycleAffectedIds,
   reciprocalRankScores,
   semanticSearchScope,
@@ -52,6 +56,8 @@ const DIALOG_CREATE_IN_FOLDER_PREFIX = 'subPages.createInFolderDialog';
 
 const SETTINGS_SECTION = 'subPages';
 const SETTING_PANEL_SORT_MODE = 'subPages.panelSortMode';
+const SETTING_PANEL_NOTE_TEXT_SIZE = 'subPages.panelNoteTextSize';
+const SETTING_PANEL_ROW_SPACING = 'subPages.panelRowSpacing';
 
 const PARENT_ID_KEY = 'subPages.parentId';
 const CHILD_IDS_KEY = 'subPages.childIds';
@@ -259,6 +265,28 @@ async function registerSettings(): Promise<void> {
         manual: 'Manual',
         title: 'Title',
       },
+    },
+    [SETTING_PANEL_NOTE_TEXT_SIZE]: {
+      value: PANEL_APPEARANCE_DEFAULTS.noteTextSize,
+      type: SettingItemType.Int,
+      section: SETTINGS_SECTION,
+      public: true,
+      label: 'Note text size (px)',
+      description: 'Sets the text size of note titles in the Sub-Pages panel.',
+      minimum: PANEL_APPEARANCE_LIMITS.noteTextSize.minimum,
+      maximum: PANEL_APPEARANCE_LIMITS.noteTextSize.maximum,
+      step: 1,
+    },
+    [SETTING_PANEL_ROW_SPACING]: {
+      value: PANEL_APPEARANCE_DEFAULTS.rowSpacing,
+      type: SettingItemType.Int,
+      section: SETTINGS_SECTION,
+      public: true,
+      label: 'Vertical spacing between note rows (px)',
+      description: 'Adds vertical breathing room to note rows in the Sub-Pages panel, including search results.',
+      minimum: PANEL_APPEARANCE_LIMITS.rowSpacing.minimum,
+      maximum: PANEL_APPEARANCE_LIMITS.rowSpacing.maximum,
+      step: 1,
     },
   });
 }
@@ -494,9 +522,13 @@ async function registerRefreshEvents(): Promise<void> {
   });
 
   await joplin.settings.onChange(async (event) => {
-    if (event.keys.includes(SETTING_PANEL_SORT_MODE)) {
+    if (event.keys.some((key) => [
+      SETTING_PANEL_SORT_MODE,
+      SETTING_PANEL_NOTE_TEXT_SIZE,
+      SETTING_PANEL_ROW_SPACING,
+    ].includes(key))) {
       markPanelStateChanged();
-      schedulePanelRefresh();
+      schedulePanelRefresh(0);
     }
   });
 
@@ -1173,6 +1205,7 @@ async function panelVisible(): Promise<boolean> {
 }
 
 async function buildPanelState(selectedNoteIdOverride?: string): Promise<any> {
+  const appearance = await panelAppearance();
   try {
     const context = await activeJoplinViewContext();
     const folder = context.folder;
@@ -1186,6 +1219,7 @@ async function buildPanelState(selectedNoteIdOverride?: string): Promise<any> {
         compatibilityError: context.compatibilityError,
         selectedNoteId: currentSelectedNoteId,
         sortMode: await panelSortMode(),
+        appearance,
         nodes: [],
         noteCount: 0,
         repairCount: 0,
@@ -1206,6 +1240,7 @@ async function buildPanelState(selectedNoteIdOverride?: string): Promise<any> {
       compatibilityError: context.compatibilityError,
       selectedNoteId: currentSelectedNoteId,
       sortMode,
+      appearance,
       nodes: tree.roots,
       noteCount: notes.length,
       repairCount: tree.repairCount,
@@ -1221,6 +1256,7 @@ async function buildPanelState(selectedNoteIdOverride?: string): Promise<any> {
       compatibilityError: lastValidViewContext?.compatibilityError ?? null,
       selectedNoteId: selectedNoteIdOverride !== undefined ? selectedNoteIdOverride : await selectedNoteId(),
       sortMode: await panelSortMode(),
+      appearance,
       nodes: [],
       noteCount: 0,
       repairCount: 0,
@@ -1228,6 +1264,21 @@ async function buildPanelState(selectedNoteIdOverride?: string): Promise<any> {
       aiIndexStatus: await getAiIndexStatusSafe(),
       error: message,
     };
+  }
+}
+
+async function panelAppearance(): Promise<PanelAppearance> {
+  try {
+    const values = await joplin.settings.values([
+      SETTING_PANEL_NOTE_TEXT_SIZE,
+      SETTING_PANEL_ROW_SPACING,
+    ]);
+    return normalizePanelAppearance({
+      noteTextSize: values[SETTING_PANEL_NOTE_TEXT_SIZE],
+      rowSpacing: values[SETTING_PANEL_ROW_SPACING],
+    });
+  } catch {
+    return { ...PANEL_APPEARANCE_DEFAULTS };
   }
 }
 

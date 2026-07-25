@@ -40,7 +40,11 @@ Semantic search uses the index managed by Joplin. The panel reports when that in
 4. Restart Joplin.
 5. Open the panel with **View > Toggle Sub-Pages panel** or the Sub-Pages toolbar button.
 
-Plugin settings are available under **Tools > Options > Sub-Pages**.
+The validated development build (`dist/`) and installable package (`publish/com.codex.subPages.jpl`) are versioned in this repository. On a computer already configured to load this repository's `dist/` directory as a Joplin development plugin, `git pull` followed by a Joplin restart loads the current build. A plugin installed from the `.jpl` is copied into Joplin's plugin directory, so reinstall it from the updated file after pulling.
+
+## Appearance settings
+
+In **Tools > Options > Sub-Pages**, you can set the note-title text size (10-24 px) and vertical spacing between note rows (0-24 px). Both apply immediately to normal panel rows and search results.
 
 ## Important Limitations
 
@@ -80,7 +84,7 @@ npm run dist
 
 The built plugin is written to `publish/com.codex.subPages.jpl`.
 
-For local testing in Joplin Desktop, add this directory to **Options -> Plugins -> Development plugins** and restart Joplin.
+For local testing in Joplin Desktop, add this repository's `dist/` directory to **Options -> Plugins -> Development plugins** and restart Joplin.
 
 ## Requirements
 

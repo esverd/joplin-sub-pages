@@ -23,6 +23,11 @@
   const searchDebounceMs = 380;
   const selectionPollMs = 1500;
   const statePollMs = 1000;
+  const defaultPanelAppearance = Object.freeze({ noteTextSize: 12, rowSpacing: 0 });
+  const minimumPanelNoteTextSize = 10;
+  const maximumPanelNoteTextSize = 24;
+  const minimumPanelRowSpacing = 0;
+  const maximumPanelRowSpacing = 24;
   const joplinNoteDragType = 'text/x-jop-note-ids';
 
   const icons = {
@@ -60,8 +65,9 @@
     if (!response) return;
 
     if (response.state) {
-      if (typeof response.revision === 'number') stateRevision = response.revision;
+      if (!acceptStateRevision(response.revision)) return;
       currentState = response.state;
+      applyPanelAppearance();
       normalizeSearchScopeForView();
       statusText = response.message || '';
       syncPanelSelectionToSelectedNote();
@@ -72,6 +78,48 @@
     }
 
     if (response.message) setStatus(response.message);
+  }
+
+  function acceptStateRevision(revision) {
+    if (!Number.isFinite(revision)) return true;
+    if (revision < stateRevision) return false;
+    stateRevision = revision;
+    return true;
+  }
+
+  function boundedInteger(value, fallback, minimum, maximum) {
+    const parsed = typeof value === 'number'
+      ? value
+      : typeof value === 'string' && value.trim()
+        ? Number(value)
+        : Number.NaN;
+    if (!Number.isFinite(parsed)) return fallback;
+    return Math.min(maximum, Math.max(minimum, Math.round(parsed)));
+  }
+
+  function panelAppearanceFromState() {
+    const appearance = currentState && currentState.appearance;
+    return {
+      noteTextSize: boundedInteger(
+        appearance && appearance.noteTextSize,
+        defaultPanelAppearance.noteTextSize,
+        minimumPanelNoteTextSize,
+        maximumPanelNoteTextSize,
+      ),
+      rowSpacing: boundedInteger(
+        appearance && appearance.rowSpacing,
+        defaultPanelAppearance.rowSpacing,
+        minimumPanelRowSpacing,
+        maximumPanelRowSpacing,
+      ),
+    };
+  }
+
+  function applyPanelAppearance() {
+    const appearance = panelAppearanceFromState();
+    app.style.setProperty('--sub-pages-note-font-size', `${appearance.noteTextSize}px`);
+    app.style.setProperty('--sub-pages-row-extra-spacing', `${appearance.rowSpacing}px`);
+    app.style.setProperty('--sub-pages-row-half-spacing', `${appearance.rowSpacing / 2}px`);
   }
 
   function setBusy(value) {
@@ -1700,8 +1748,9 @@
 
       if (message.name !== 'state') return;
       if (isRowDragActive()) return;
-      if (typeof message.revision === 'number') stateRevision = message.revision;
+      if (!acceptStateRevision(message.revision)) return;
       currentState = message.state;
+      applyPanelAppearance();
       normalizeSearchScopeForView();
       statusText = '';
       syncPanelSelectionToSelectedNote();
