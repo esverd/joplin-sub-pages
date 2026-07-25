@@ -44,6 +44,7 @@ async function main() {
   const page = pages.find(p => p.url === pageUrl) || pages.find(p => p.url.includes('panel-harness'));
   if (!page) throw new Error('Harness page not found');
   const cdp = await connect(page.webSocketDebuggerUrl);
+  try {
   await cdp.send('Runtime.enable');
   await cdp.send('Page.enable');
   await cdp.send('Network.enable');
@@ -60,6 +61,146 @@ async function main() {
   async function setViewport(width, height = 520) {
     await cdp.send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: false });
     await new Promise(r => setTimeout(r, 50));
+  }
+
+  async function setHarnessSearch(query, scope = 'all') {
+    const started = await evalJs(`(async () => {
+      const requestedScope = ${JSON.stringify(scope)};
+      const scopeButton = [...document.querySelectorAll('button[data-action="setSearchScope"]')]
+        .find((button) => button.dataset.scope === requestedScope);
+      if (!scopeButton) return { ok: false, message: 'Search scope button was not found.' };
+      if (scopeButton.getAttribute('aria-pressed') !== 'true') {
+        scopeButton.click();
+        await new Promise(requestAnimationFrame);
+      }
+      const input = document.querySelector('.sub-pages-search-input');
+      if (!input) return { ok: false, message: 'Search input was not found.' };
+      input.focus();
+      input.value = ${JSON.stringify(query)};
+      input.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: ${JSON.stringify(query)} }));
+      return { ok: true };
+    })()`);
+    if (!started?.ok) throw new Error(`Could not start harness search for "${query}": ${JSON.stringify(started)}`);
+  }
+
+  async function waitForHarnessSearch(label, query, predicate, timeoutMs = 4000) {
+    const deadline = Date.now() + timeoutMs;
+    let snapshot = null;
+    while (Date.now() < deadline) {
+      snapshot = await evalJs(`(() => {
+        const input = document.querySelector('.sub-pages-search-input');
+        const list = document.querySelector('.sub-pages-list.is-search-results');
+        const external = document.querySelector('.sub-pages-search-results');
+        return {
+          inputValue: input?.value || '',
+          status: document.querySelector('.sub-pages-filter-status')?.textContent || '',
+          localRows: list ? list.querySelectorAll('.sub-pages-row').length : 0,
+          externalRows: external ? external.querySelectorAll('.sub-pages-row').length : 0,
+        };
+      })()`);
+      if (snapshot.inputValue === query && !snapshot.status.startsWith('Searching ') && predicate(snapshot)) return snapshot;
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    throw new Error(`Timed out waiting for ${label}: ${JSON.stringify(snapshot)}`);
+  }
+
+  async function readSearchLayout() {
+    return evalJs(`(() => {
+      const shell = document.querySelector('.sub-pages-shell');
+      const list = document.querySelector('.sub-pages-list.is-search-results');
+      const localTree = list?.querySelector('.sub-pages-tree');
+      const external = document.querySelector('.sub-pages-search-results');
+      const externalTree = external?.querySelector('.sub-pages-external-results');
+      const externalHeading = external?.querySelector('.sub-pages-section-heading');
+      const localRows = list ? [...list.querySelectorAll('.sub-pages-row')] : [];
+      const externalRows = external ? [...external.querySelectorAll('.sub-pages-row')] : [];
+      const listRect = list?.getBoundingClientRect();
+      const localTreeRect = localTree?.getBoundingClientRect();
+      const externalRect = external?.getBoundingClientRect();
+      const externalTreeRect = externalTree?.getBoundingClientRect();
+      const externalHeadingRect = externalHeading?.getBoundingClientRect();
+      const lastLocalRowRect = localRows[localRows.length - 1]?.getBoundingClientRect();
+      const rowsAreOrdered = (rows) => rows.every((row, index) => {
+        const rect = row.getBoundingClientRect();
+        return rect.height >= 19 && (!index || rect.top >= rows[index - 1].getBoundingClientRect().bottom - 1);
+      });
+      const minimumRowHeight = (rows) => rows.length
+        ? Math.min(...rows.map((row) => row.getBoundingClientRect().height))
+        : null;
+      return {
+        width: innerWidth,
+        inputValue: document.querySelector('.sub-pages-search-input')?.value || '',
+        status: document.querySelector('.sub-pages-filter-status')?.textContent || '',
+        hasSearchList: !!list,
+        localRows: localRows.length,
+        externalRows: externalRows.length,
+        localRowsInOrder: rowsAreOrdered(localRows),
+        externalRowsInOrder: rowsAreOrdered(externalRows),
+        localRowMinHeight: minimumRowHeight(localRows),
+        externalRowMinHeight: minimumRowHeight(externalRows),
+        listHeight: listRect?.height,
+        localTreeHeight: localTreeRect?.height,
+        treeToExternalGap: externalRect && localTreeRect ? externalRect.top - localTreeRect.bottom : null,
+        lastLocalRowBottom: lastLocalRowRect?.bottom,
+        externalHeadingTop: externalHeadingRect?.top,
+        lastLocalRowToExternalHeadingGap: lastLocalRowRect && externalHeadingRect
+          ? externalHeadingRect.top - lastLocalRowRect.bottom
+          : null,
+        externalTreeHeight: externalTreeRect?.height,
+        shellScrollHeight: shell?.scrollHeight,
+        shellClientHeight: shell?.clientHeight,
+        shellOverflowY: shell ? getComputedStyle(shell).overflowY : null,
+      };
+    })()`);
+  }
+
+  async function scrollSearchResultToEnd(kind) {
+    return evalJs(`(async () => {
+      const shell = document.querySelector('.sub-pages-shell');
+      const selector = ${JSON.stringify(kind === 'local' ? '.sub-pages-list.is-search-results .sub-pages-row' : '.sub-pages-search-results .sub-pages-row')};
+      const rows = [...document.querySelectorAll(selector)];
+      const lastRow = rows[rows.length - 1];
+      if (!shell || !lastRow) return { ok: false, shell: !!shell, rowCount: rows.length };
+      shell.scrollTop = shell.scrollHeight;
+      await new Promise(requestAnimationFrame);
+      const shellRect = shell.getBoundingClientRect();
+      const rowRect = lastRow.getBoundingClientRect();
+      return {
+        ok: true,
+        scrollTop: shell.scrollTop,
+        shellScrollHeight: shell.scrollHeight,
+        shellClientHeight: shell.clientHeight,
+        lastRowVisible: rowRect.top >= shellRect.top - 1 && rowRect.bottom <= shellRect.bottom + 1,
+      };
+    })()`);
+  }
+
+  function hasCompactLocalAndExternalLayout(layout, expectedLocalRows, expectedExternalRows) {
+    return (
+      layout.hasSearchList
+      && layout.localRows === expectedLocalRows
+      && layout.externalRows === expectedExternalRows
+      && layout.localRowsInOrder
+      && layout.externalRowsInOrder
+      && Number.isFinite(layout.localRowMinHeight)
+      && Number.isFinite(layout.externalRowMinHeight)
+      && layout.localRowMinHeight >= 19
+      && layout.externalRowMinHeight >= 19
+      && Number.isFinite(layout.listHeight)
+      && Number.isFinite(layout.localTreeHeight)
+      && Math.abs(layout.listHeight - layout.localTreeHeight) <= 1
+      && Number.isFinite(layout.lastLocalRowBottom)
+      && Number.isFinite(layout.externalHeadingTop)
+      && Number.isFinite(layout.lastLocalRowToExternalHeadingGap)
+      && layout.lastLocalRowToExternalHeadingGap >= 0
+      && layout.lastLocalRowToExternalHeadingGap <= 16
+      && Number.isFinite(layout.externalTreeHeight)
+      && layout.externalTreeHeight > 0
+      && Number.isFinite(layout.shellScrollHeight)
+      && Number.isFinite(layout.shellClientHeight)
+      && layout.shellScrollHeight > layout.shellClientHeight
+      && ['auto', 'scroll'].includes(layout.shellOverflowY)
+    );
   }
 
   const widths = [360, 240, 180, 140];
@@ -128,102 +269,186 @@ async function main() {
     throw new Error(`All-notebooks search did not surface external notebook matches: ${JSON.stringify(bodySearch)}`);
   }
 
+  let searchFixture;
+  let childTransition;
+  let pendingChildTransition;
+  let externalOnlyTransition;
+  let mixedTransition;
+  let mixedSearchLayouts;
+  let mixedSearchEnd;
+  let localOnlyTransition;
+  let localOnlyLayout;
+  let localOnlyEnd;
+  let denseExternalOnlyTransition;
+  let externalOnlyLayout;
+  let externalOnlyEnd;
+  let searchLayoutFixtureActive = false;
+
+  async function restoreSearchLayoutFixture() {
+    await evalJs(`(async () => {
+      document.querySelector('.sub-pages-clear-search')?.click();
+      const allScope = document.querySelector('button[data-action="setSearchScope"][data-scope="all"]');
+      if (allScope && allScope.getAttribute('aria-pressed') !== 'true') allScope.click();
+      await new Promise(requestAnimationFrame);
+      const hasOriginalNodes = Array.isArray(window.__searchLayoutOriginalNodes);
+      const hasOriginalExternalNotes = Array.isArray(window.__searchLayoutOriginalExternalNotes);
+      if (hasOriginalNodes) window.mockNotebookState.nodes = window.__searchLayoutOriginalNodes;
+      if (hasOriginalExternalNotes) window.mockExternalNotes = window.__searchLayoutOriginalExternalNotes;
+      if (hasOriginalNodes || hasOriginalExternalNotes) {
+        window.mockState = window.mockNotebookState;
+        window.receive({ name: 'state', revision: 4, state: window.mockNotebookState });
+      }
+      delete window.__searchLayoutOriginalNodes;
+      delete window.__searchLayoutOriginalExternalNotes;
+      await new Promise(requestAnimationFrame);
+    })()`);
+  }
+
+  try {
   await setViewport(360, 220);
-  const searchLayout = await evalJs(`(async () => {
-    const searchFor = async (query) => {
-      const input = document.querySelector('.sub-pages-search-input');
-      input.focus();
-      input.value = query;
-      input.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: query }));
-      await new Promise(resolve => setTimeout(resolve, 650));
-    };
-
-    // Search transitions retain the previous result state while the next query
-    // is debounced, which is the path that previously exposed the flex bug.
-    await searchFor('web');
-    await searchFor('child');
-    const childTransition = {
-      localRows: document.querySelectorAll('.sub-pages-list.is-search-results .sub-pages-row').length,
-      hasExternalResults: !!document.querySelector('.sub-pages-search-results'),
-    };
-    await searchFor('web');
-
-    // Force the results section to overflow a compact panel. The shell should
-    // scroll, while each rendered search section remains content-sized.
-    window.mockExternalNotes.push(...Array.from({ length: 12 }, (_, index) => ({
-      id: 'external-layout-' + index,
-      title: 'Archive Web Result ' + index,
-      parentId: 'archive',
-      notebookId: 'archive',
-      notebookTitle: 'Archive',
-      pageType: 'note',
-      isTodo: false,
-      todoCompleted: false,
-      updatedTime: 100 + index,
-      body: 'web layout result',
-    })));
-    await searchFor('web');
-
-    const shell = document.querySelector('.sub-pages-shell');
-    const list = document.querySelector('.sub-pages-list.is-search-results');
-    const localTree = list?.querySelector('.sub-pages-tree');
-    const external = document.querySelector('.sub-pages-search-results');
-    const externalTree = external?.querySelector('.sub-pages-external-results');
-    const localRect = localTree?.getBoundingClientRect();
-    const listRect = list?.getBoundingClientRect();
-    const externalRect = external?.getBoundingClientRect();
-    const externalTreeRect = externalTree?.getBoundingClientRect();
-    const localRows = list ? [...list.querySelectorAll('.sub-pages-row')].length : 0;
-    const externalRows = external ? [...external.querySelectorAll('.sub-pages-row')].length : 0;
-    const externalRowsInOrder = external
-      ? [...external.querySelectorAll('.sub-pages-row')].every((row, index, rows) => {
-        const rect = row.getBoundingClientRect();
-        return rect.height > 0 && (!index || rect.top >= rows[index - 1].getBoundingClientRect().bottom - 1);
-      })
-      : false;
-
-    document.querySelector('.sub-pages-clear-search')?.click();
+  searchLayoutFixtureActive = true;
+  searchFixture = await evalJs(`(async () => {
+    window.__searchLayoutOriginalNodes = window.mockNotebookState.nodes;
+    window.__searchLayoutOriginalExternalNotes = window.mockExternalNotes;
+    window.mockNotebookState.nodes = [
+      ...window.__searchLayoutOriginalNodes,
+      ...Array.from({ length: 18 }, (_, index) => ({
+        id: 'local-layout-' + index,
+        title: 'local-layout result ' + index,
+        parentId: null,
+        notebookId: 'f1',
+        notebookTitle: 'Harness',
+        pageType: 'note',
+        isTodo: false,
+        todoCompleted: false,
+        repairReason: null,
+        canMoveUp: false,
+        canMoveDown: false,
+        children: [],
+      })),
+    ];
+    window.mockExternalNotes = [
+      ...window.__searchLayoutOriginalExternalNotes,
+      ...Array.from({ length: 12 }, (_, index) => ({
+        id: 'external-layout-' + index,
+        title: 'external-layout web result ' + index,
+        parentId: 'archive',
+        notebookId: 'archive',
+        notebookTitle: 'Archive',
+        pageType: 'note',
+        isTodo: false,
+        todoCompleted: false,
+        updatedTime: 100 + index,
+        body: 'external-layout web result',
+      })),
+    ];
+    window.mockState = window.mockNotebookState;
+    window.receive({ name: 'state', revision: 3, state: window.mockNotebookState });
     await new Promise(requestAnimationFrame);
-
     return {
-      hasSearchList: !!list,
-      childTransition,
-      localRows,
-      externalRows,
-      externalRowsInOrder,
-      listHeight: listRect?.height,
-      localTreeHeight: localRect?.height,
-      treeToExternalGap: externalRect && localRect ? externalRect.top - localRect.bottom : null,
-      externalTreeHeight: externalTreeRect?.height,
-      shellScrollHeight: shell?.scrollHeight,
-      shellClientHeight: shell?.clientHeight,
-      shellOverflowY: shell ? getComputedStyle(shell).overflowY : null,
+      localFixtureCount: window.mockNotebookState.nodes.length,
+      externalFixtureCount: window.mockExternalNotes.length,
     };
   })()`);
-  if (!searchLayout.hasSearchList || searchLayout.localRows !== 1 || searchLayout.externalRows !== 13) {
-    throw new Error(`Search layout fixture did not render the expected local and external results: ${JSON.stringify(searchLayout)}`);
+  if (searchFixture.localFixtureCount !== 21 || searchFixture.externalFixtureCount !== 13) {
+    throw new Error(`Search layout fixture setup failed: ${JSON.stringify(searchFixture)}`);
   }
-  if (searchLayout.childTransition.localRows < 3 || searchLayout.childTransition.hasExternalResults) {
-    throw new Error(`Search transitions did not replace external results for the new query: ${JSON.stringify(searchLayout)}`);
+
+  // Start with a mixed result set, then replace it while the search debounce
+  // keeps the prior rows onscreen. That is the transition that previously
+  // exposed stretched or overlapping search sections.
+  await setHarnessSearch('web');
+  mixedTransition = await waitForHarnessSearch('mixed local and external results', 'web', (snapshot) => (
+    snapshot.localRows === 1 && snapshot.externalRows === 13
+  ));
+  await setHarnessSearch('child');
+  pendingChildTransition = await readSearchLayout();
+  if (!hasCompactLocalAndExternalLayout(pendingChildTransition, 1, 13)
+    || pendingChildTransition.inputValue !== 'child') {
+    throw new Error(`Changing a mixed search left squished rows or a phantom gap before replacement: ${JSON.stringify(pendingChildTransition)}`);
   }
-  if (!Number.isFinite(searchLayout.listHeight)
-    || !Number.isFinite(searchLayout.localTreeHeight)
-    || !Number.isFinite(searchLayout.treeToExternalGap)
-    || Math.abs(searchLayout.listHeight - searchLayout.localTreeHeight) > 1
-    || searchLayout.treeToExternalGap < 0
-    || searchLayout.treeToExternalGap > 16) {
-    throw new Error(`Search results were stretched, squished, or separated from Other notebooks: ${JSON.stringify(searchLayout)}`);
+  childTransition = await waitForHarnessSearch('current-notebook-only child results', 'child', (snapshot) => (
+    snapshot.localRows >= 3 && snapshot.externalRows === 0
+  ));
+  await setHarnessSearch('canvas');
+  externalOnlyTransition = await waitForHarnessSearch('single external-only result', 'canvas', (snapshot) => (
+    snapshot.localRows === 0 && snapshot.externalRows === 1
+  ));
+  await setHarnessSearch('web');
+  mixedTransition = await waitForHarnessSearch('mixed local and external results after replacement', 'web', (snapshot) => (
+    snapshot.localRows === 1 && snapshot.externalRows === 13
+  ));
+
+  mixedSearchLayouts = [];
+  for (const width of widths) {
+    await setViewport(width, 220);
+    mixedSearchLayouts.push(await readSearchLayout());
   }
-  if (!searchLayout.externalRowsInOrder
-    || !Number.isFinite(searchLayout.externalTreeHeight)
-    || !Number.isFinite(searchLayout.shellScrollHeight)
-    || !Number.isFinite(searchLayout.shellClientHeight)
-    || searchLayout.externalTreeHeight <= 0
-    || searchLayout.shellScrollHeight <= searchLayout.shellClientHeight
-    || !['auto', 'scroll'].includes(searchLayout.shellOverflowY)) {
-    throw new Error(`Long search results did not remain visible in a scrollable panel: ${JSON.stringify(searchLayout)}`);
+  const mixedSearchLayoutFailures = mixedSearchLayouts.filter((searchLayout) => (
+    !hasCompactLocalAndExternalLayout(searchLayout, 1, 13)
+  ));
+  if (mixedSearchLayoutFailures.length) {
+    throw new Error(`Mixed search results were stretched, squished, or separated from Other notebooks: ${JSON.stringify(mixedSearchLayoutFailures)}`);
   }
-  await setViewport(360);
+  mixedSearchEnd = await scrollSearchResultToEnd('external');
+  if (!mixedSearchEnd.ok || mixedSearchEnd.scrollTop <= 0 || !mixedSearchEnd.lastRowVisible) {
+    throw new Error(`The final mixed-search external row was not reachable: ${JSON.stringify(mixedSearchEnd)}`);
+  }
+
+  await setHarnessSearch('local-layout', 'notebook');
+  localOnlyTransition = await waitForHarnessSearch('dense local-only results', 'local-layout', (snapshot) => (
+    snapshot.localRows === 18 && snapshot.externalRows === 0
+  ));
+  localOnlyLayout = await readSearchLayout();
+  if (!localOnlyLayout.hasSearchList
+    || !localOnlyLayout.localRowsInOrder
+    || !Number.isFinite(localOnlyLayout.localRowMinHeight)
+    || localOnlyLayout.localRowMinHeight < 19
+    || localOnlyLayout.externalRows !== 0
+    || !Number.isFinite(localOnlyLayout.listHeight)
+    || !Number.isFinite(localOnlyLayout.localTreeHeight)
+    || Math.abs(localOnlyLayout.listHeight - localOnlyLayout.localTreeHeight) > 1
+    || !Number.isFinite(localOnlyLayout.shellScrollHeight)
+    || !Number.isFinite(localOnlyLayout.shellClientHeight)
+    || localOnlyLayout.shellScrollHeight <= localOnlyLayout.shellClientHeight
+    || !['auto', 'scroll'].includes(localOnlyLayout.shellOverflowY)) {
+    throw new Error(`Dense local-only search results were compressed or clipped: ${JSON.stringify(localOnlyLayout)}`);
+  }
+  localOnlyEnd = await scrollSearchResultToEnd('local');
+  if (!localOnlyEnd.ok || localOnlyEnd.scrollTop <= 0 || !localOnlyEnd.lastRowVisible) {
+    throw new Error(`The final local-only search row was not reachable: ${JSON.stringify(localOnlyEnd)}`);
+  }
+
+  await setHarnessSearch('external-layout');
+  denseExternalOnlyTransition = await waitForHarnessSearch('dense external-only results', 'external-layout', (snapshot) => (
+    snapshot.localRows === 0 && snapshot.externalRows === 12
+  ));
+  externalOnlyLayout = await readSearchLayout();
+  if (externalOnlyLayout.hasSearchList
+    || !externalOnlyLayout.externalRowsInOrder
+    || !Number.isFinite(externalOnlyLayout.externalRowMinHeight)
+    || externalOnlyLayout.externalRowMinHeight < 19
+    || externalOnlyLayout.externalRows !== 12
+    || !Number.isFinite(externalOnlyLayout.externalTreeHeight)
+    || externalOnlyLayout.externalTreeHeight <= 0
+    || !Number.isFinite(externalOnlyLayout.shellScrollHeight)
+    || !Number.isFinite(externalOnlyLayout.shellClientHeight)
+    || externalOnlyLayout.shellScrollHeight <= externalOnlyLayout.shellClientHeight
+    || !['auto', 'scroll'].includes(externalOnlyLayout.shellOverflowY)) {
+    throw new Error(`Dense external-only search results were compressed or left a phantom local gap: ${JSON.stringify(externalOnlyLayout)}`);
+  }
+  externalOnlyEnd = await scrollSearchResultToEnd('external');
+  if (!externalOnlyEnd.ok || externalOnlyEnd.scrollTop <= 0 || !externalOnlyEnd.lastRowVisible) {
+    throw new Error(`The final external-only search row was not reachable: ${JSON.stringify(externalOnlyEnd)}`);
+  }
+
+  } finally {
+    if (searchLayoutFixtureActive) {
+      await restoreSearchLayoutFixture();
+      searchLayoutFixtureActive = false;
+    }
+    await setViewport(360);
+  }
 
   const notebookScopeSearch = await evalJs(`(async () => {
     document.querySelector('button[data-action="setSearchScope"][data-scope="notebook"]').click();
@@ -600,8 +825,15 @@ async function main() {
     throw new Error(`Responsive All Notes header layout failed: ${JSON.stringify(allNotesLayoutFailures)}`);
   }
 
-  console.log(JSON.stringify({ responsive, search, noResults, bodySearch, searchLayout, notebookScopeSearch, dragPayloads, multiSelect, confirmUnlink, dragDrop, invalidDragDrop, menuKeys, treeKeys, allNotes, allNotesResponsive }, null, 2));
-  cdp.close();
+  console.log(JSON.stringify({ responsive, search, noResults, bodySearch, searchFixture, childTransition, pendingChildTransition, externalOnlyTransition, mixedTransition, mixedSearchLayouts, mixedSearchEnd, localOnlyTransition, localOnlyLayout, localOnlyEnd, denseExternalOnlyTransition, externalOnlyLayout, externalOnlyEnd, notebookScopeSearch, dragPayloads, multiSelect, confirmUnlink, dragDrop, invalidDragDrop, menuKeys, treeKeys, allNotes, allNotesResponsive }, null, 2));
+  } finally {
+    try {
+      await cdp.send('Emulation.clearDeviceMetricsOverride');
+    } catch {
+      // The CDP target may have gone away while a failing test was unwinding.
+    }
+    cdp.close();
+  }
 }
 
 main().catch(err => { console.error(err); process.exit(1); });

@@ -152,6 +152,7 @@ async function main() {
   let targetFolderId = null;
   let originalFolderId = null;
   let originalClipboard = null;
+  let compactPanelModeActive = false;
 
   mainCdp.on('Runtime.executionContextCreated', (params) => contexts.push(params.context));
   await mainCdp.send('Page.enable');
@@ -190,6 +191,148 @@ async function main() {
       await delay(300);
     }
     throw new Error(`Timed out waiting for ${label}.\n${JSON.stringify(state, null, 2)}`);
+  }
+
+  async function setPanelSearchQuery(query) {
+    return panelEval(`
+      const allScope = document.querySelector('button[data-action="setSearchScope"][data-scope="all"]');
+      if (allScope && allScope.getAttribute('aria-pressed') !== 'true') {
+        allScope.click();
+        await new Promise(resolve => requestAnimationFrame(resolve));
+      }
+      const input = document.querySelector('.sub-pages-search-input');
+      if (!input) return { ok: false, message: 'Search input was not found.' };
+      input.focus();
+      input.value = arg.query;
+      input.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: arg.query }));
+      return { ok: true };
+    `, { query });
+  }
+
+  async function waitForIndexedPanelSearch(label, query, expectedLocalIds, expectedExternalIds, timeoutMs = 30000) {
+    const deadline = Date.now() + timeoutMs;
+    let response = null;
+    while (Date.now() < deadline) {
+      // Refresh deliberately clears the plugin's search cache so an early
+      // full-text-index response cannot make this UAT poll stale results.
+      await panelPost({ name: 'refresh' });
+      response = await panelPost({ name: 'search', query, scope: 'all' });
+      const localIds = new Set(response.noteIds || []);
+      const externalIds = new Set((response.externalResults || []).map(note => note?.id));
+      if (response.scope === 'all'
+        && expectedLocalIds.every(noteId => localIds.has(noteId))
+        && expectedExternalIds.every(noteId => externalIds.has(noteId))) {
+        return response;
+      }
+      await delay(400);
+    }
+    throw new Error(`Timed out waiting for ${label}.\n${JSON.stringify(response, null, 2)}`);
+  }
+
+  async function setPanelCompactMode(enabled) {
+    return panelEval(`
+      const styleId = 'codex-uat-compact-panel-style';
+      document.getElementById(styleId)?.remove();
+      if (arg.enabled) {
+        const style = document.createElement('style');
+        style.id = styleId;
+        style.textContent = '.sub-pages-shell { box-sizing: border-box !important; height: 220px !important; min-height: 220px !important; max-height: 220px !important; }';
+        document.head.appendChild(style);
+      }
+      await new Promise(resolve => requestAnimationFrame(resolve));
+      const shell = document.querySelector('.sub-pages-shell');
+      return {
+        enabled: !!document.getElementById(styleId),
+        shellHeight: shell?.getBoundingClientRect().height,
+        shellClientHeight: shell?.clientHeight,
+      };
+    `, { enabled });
+  }
+
+  async function panelSearchLayout() {
+    return panelEval(`
+      const shell = document.querySelector('.sub-pages-shell');
+      const list = document.querySelector('.sub-pages-list.is-search-results');
+      const localTree = list?.querySelector('.sub-pages-tree');
+      const external = document.querySelector('.sub-pages-search-results');
+      const externalTree = external?.querySelector('.sub-pages-external-results');
+      const externalHeading = external?.querySelector('.sub-pages-section-heading');
+      const listRect = list?.getBoundingClientRect();
+      const localTreeRect = localTree?.getBoundingClientRect();
+      const externalRect = external?.getBoundingClientRect();
+      const externalTreeRect = externalTree?.getBoundingClientRect();
+      const externalHeadingRect = externalHeading?.getBoundingClientRect();
+      const localRows = list ? [...list.querySelectorAll('.sub-pages-row')] : [];
+      const externalRows = external ? [...external.querySelectorAll('.sub-pages-row')] : [];
+      const rowsAreOrdered = (rows) => rows.every((row, index) => {
+        const rect = row.getBoundingClientRect();
+        return rect.height >= 19 && (!index || rect.top >= rows[index - 1].getBoundingClientRect().bottom - 1);
+      });
+      const minimumRowHeight = (rows) => rows.length
+        ? Math.min(...rows.map((row) => row.getBoundingClientRect().height))
+        : null;
+      const lastLocalRowRect = localRows[localRows.length - 1]?.getBoundingClientRect();
+      return {
+        inputValue: document.querySelector('.sub-pages-search-input')?.value || '',
+        searchStatus: document.querySelector('.sub-pages-filter-status')?.textContent || '',
+        allScopePressed: document.querySelector('button[data-action="setSearchScope"][data-scope="all"]')?.getAttribute('aria-pressed') === 'true',
+        hasSearchList: !!list,
+        localRows: localRows.length,
+        externalRows: externalRows.length,
+        localRowsInOrder: rowsAreOrdered(localRows),
+        externalRowsInOrder: rowsAreOrdered(externalRows),
+        localRowMinHeight: minimumRowHeight(localRows),
+        externalRowMinHeight: minimumRowHeight(externalRows),
+        localNoteIds: localRows.map(row => row.dataset.noteId).filter(Boolean),
+        externalNoteIds: externalRows.map(row => row.dataset.noteId).filter(Boolean),
+        listHeight: listRect?.height,
+        localTreeHeight: localTreeRect?.height,
+        treeToExternalGap: externalRect && localTreeRect ? externalRect.top - localTreeRect.bottom : null,
+        lastLocalRowBottom: lastLocalRowRect?.bottom,
+        externalHeadingTop: externalHeadingRect?.top,
+        lastLocalRowToExternalHeadingGap: lastLocalRowRect && externalHeadingRect
+          ? externalHeadingRect.top - lastLocalRowRect.bottom
+          : null,
+        externalTreeHeight: externalTreeRect?.height,
+        shellScrollHeight: shell?.scrollHeight,
+        shellClientHeight: shell?.clientHeight,
+        shellOverflowY: shell ? getComputedStyle(shell).overflowY : null,
+      };
+    `);
+  }
+
+  async function scrollPanelSearchResultToEnd(kind) {
+    return panelEval(`
+      const shell = document.querySelector('.sub-pages-shell');
+      const selector = arg.kind === 'local'
+        ? '.sub-pages-list.is-search-results .sub-pages-row'
+        : '.sub-pages-search-results .sub-pages-row';
+      const rows = [...document.querySelectorAll(selector)];
+      const lastRow = rows[rows.length - 1];
+      if (!shell || !lastRow) return { ok: false, shell: !!shell, rowCount: rows.length };
+      shell.scrollTop = shell.scrollHeight;
+      await new Promise(resolve => requestAnimationFrame(resolve));
+      const shellRect = shell.getBoundingClientRect();
+      const rowRect = lastRow.getBoundingClientRect();
+      return {
+        ok: true,
+        scrollTop: shell.scrollTop,
+        shellScrollHeight: shell.scrollHeight,
+        shellClientHeight: shell.clientHeight,
+        lastRowVisible: rowRect.top >= shellRect.top - 1 && rowRect.bottom <= shellRect.bottom + 1,
+      };
+    `, { kind });
+  }
+
+  async function waitForPanelSearchLayout(label, predicate, timeoutMs = 20000) {
+    const deadline = Date.now() + timeoutMs;
+    let layout = null;
+    while (Date.now() < deadline) {
+      layout = await panelSearchLayout();
+      if (predicate(layout)) return layout;
+      await delay(300);
+    }
+    throw new Error(`Timed out waiting for ${label}.\n${JSON.stringify(layout, null, 2)}`);
   }
 
   function record(name, detail = {}) {
@@ -413,6 +556,93 @@ async function main() {
       body: `Other notebook body ${token}`,
     });
     assert(targetNote?.id, 'Could not create the cross-notebook All Notes fixture.', targetNote);
+
+    const externalLayoutNotes = await pluginEval(`
+      const notes = [];
+      for (let index = 0; index < arg.count; index++) {
+        notes.push(await joplin.data.post(['notes'], null, {
+          parent_id: arg.folderId,
+          title: arg.titlePrefix + ' ' + index,
+          body: arg.body,
+        }));
+      }
+      return notes;
+    `, {
+      folderId: targetFolderId,
+      count: 12,
+      titlePrefix: `Codex UAT Search Layout ${suffix}`,
+      body: `External search layout fixture ${token}`,
+    });
+    assert(Array.isArray(externalLayoutNotes) && externalLayoutNotes.length === 12 && externalLayoutNotes.every(note => note?.id), 'Could not create the external search-layout fixtures.', externalLayoutNotes);
+
+    const expectedLocalSearchIds = [parentA, parentB, childOne, childTwo];
+    const expectedExternalSearchIds = [targetNote.id, ...externalLayoutNotes.map(note => note.id)];
+    const indexedMixedSearch = await waitForIndexedPanelSearch(
+      'the mixed-notebook search fixtures to be indexed',
+      token,
+      expectedLocalSearchIds,
+      expectedExternalSearchIds,
+    );
+    record('waited for the full-text index to include mixed search fixtures', {
+      localMatches: indexedMixedSearch.noteIds?.length || 0,
+      externalMatches: indexedMixedSearch.externalResults?.length || 0,
+    });
+
+    const compactPanel = await setPanelCompactMode(true);
+    compactPanelModeActive = true;
+    assert(compactPanel.enabled
+      && Number.isFinite(compactPanel.shellHeight)
+      && compactPanel.shellHeight >= 200
+      && compactPanel.shellHeight <= 221
+      && compactPanel.shellClientHeight > 0,
+    'Could not establish the compact live panel needed to exercise scroll and flex layout.', compactPanel);
+
+    const panelSearchStarted = await setPanelSearchQuery(token);
+    assert(panelSearchStarted.ok, 'Could not start the mixed-notebook panel search.', panelSearchStarted);
+    const mixedSearchLayout = await waitForPanelSearchLayout('mixed notebook search layout', (layout) => (
+      layout.inputValue === token
+      && !layout.searchStatus.startsWith('Searching ')
+      && layout.allScopePressed
+      && layout.hasSearchList
+      && layout.localRows >= 3
+      && layout.externalRows >= 13
+      && expectedLocalSearchIds.every(noteId => layout.localNoteIds.includes(noteId))
+      && expectedExternalSearchIds.every(noteId => layout.externalNoteIds.includes(noteId))
+    ));
+    assert(mixedSearchLayout.localRowsInOrder
+      && mixedSearchLayout.externalRowsInOrder
+      && Number.isFinite(mixedSearchLayout.localRowMinHeight)
+      && Number.isFinite(mixedSearchLayout.externalRowMinHeight)
+      && mixedSearchLayout.localRowMinHeight >= 19
+      && mixedSearchLayout.externalRowMinHeight >= 19
+      && Number.isFinite(mixedSearchLayout.listHeight)
+      && Number.isFinite(mixedSearchLayout.localTreeHeight)
+      && Math.abs(mixedSearchLayout.listHeight - mixedSearchLayout.localTreeHeight) <= 1
+      && Number.isFinite(mixedSearchLayout.lastLocalRowBottom)
+      && Number.isFinite(mixedSearchLayout.externalHeadingTop)
+      && Number.isFinite(mixedSearchLayout.lastLocalRowToExternalHeadingGap)
+      && mixedSearchLayout.lastLocalRowToExternalHeadingGap >= 0
+      && mixedSearchLayout.lastLocalRowToExternalHeadingGap <= 16
+      && mixedSearchLayout.externalTreeHeight > 0
+      && Number.isFinite(mixedSearchLayout.shellScrollHeight)
+      && Number.isFinite(mixedSearchLayout.shellClientHeight)
+      && mixedSearchLayout.shellScrollHeight > mixedSearchLayout.shellClientHeight
+      && ['auto', 'scroll'].includes(mixedSearchLayout.shellOverflowY),
+    'Mixed notebook search layout had stretched local results or whitespace before Other notebooks.', mixedSearchLayout);
+    const mixedSearchEnd = await scrollPanelSearchResultToEnd('external');
+    assert(mixedSearchEnd.ok && mixedSearchEnd.scrollTop > 0 && mixedSearchEnd.lastRowVisible,
+      'The final Other notebooks result was not reachable in the compact live panel.', mixedSearchEnd);
+    await panelEval(`document.querySelector('.sub-pages-clear-search')?.click(); return true;`);
+    const restoredPanel = await setPanelCompactMode(false);
+    compactPanelModeActive = false;
+    assert(!restoredPanel.enabled, 'Could not remove the compact UAT panel style.', restoredPanel);
+    record('verified mixed-notebook search layout', {
+      localRows: mixedSearchLayout.localRows,
+      externalRows: mixedSearchLayout.externalRows,
+      lastLocalRowToExternalHeadingGap: mixedSearchLayout.lastLocalRowToExternalHeadingGap,
+      scrollTop: mixedSearchEnd.scrollTop,
+    });
+
     const allNotesOpen = await openAllNotes();
     assert(allNotesOpen.ok, 'Could not select All Notes in Joplin.', allNotesOpen);
     state = await waitForState('All Notes view', current => (
@@ -573,6 +803,7 @@ async function main() {
 
     console.log(JSON.stringify({ ok: true, checks }, null, 2));
   } finally {
+    if (compactPanelModeActive) await setPanelCompactMode(false).catch(() => {});
     if (originalFolderId) await openFolder(originalFolderId).catch(() => {});
     if (originalClipboard !== null && originalClipboard !== undefined) {
       await pluginEval(`await joplin.clipboard.writeText(arg.text); return true;`, { text: originalClipboard }).catch(() => {});
