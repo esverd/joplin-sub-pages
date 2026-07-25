@@ -128,6 +128,103 @@ async function main() {
     throw new Error(`All-notebooks search did not surface external notebook matches: ${JSON.stringify(bodySearch)}`);
   }
 
+  await setViewport(360, 220);
+  const searchLayout = await evalJs(`(async () => {
+    const searchFor = async (query) => {
+      const input = document.querySelector('.sub-pages-search-input');
+      input.focus();
+      input.value = query;
+      input.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: query }));
+      await new Promise(resolve => setTimeout(resolve, 650));
+    };
+
+    // Search transitions retain the previous result state while the next query
+    // is debounced, which is the path that previously exposed the flex bug.
+    await searchFor('web');
+    await searchFor('child');
+    const childTransition = {
+      localRows: document.querySelectorAll('.sub-pages-list.is-search-results .sub-pages-row').length,
+      hasExternalResults: !!document.querySelector('.sub-pages-search-results'),
+    };
+    await searchFor('web');
+
+    // Force the results section to overflow a compact panel. The shell should
+    // scroll, while each rendered search section remains content-sized.
+    window.mockExternalNotes.push(...Array.from({ length: 12 }, (_, index) => ({
+      id: 'external-layout-' + index,
+      title: 'Archive Web Result ' + index,
+      parentId: 'archive',
+      notebookId: 'archive',
+      notebookTitle: 'Archive',
+      pageType: 'note',
+      isTodo: false,
+      todoCompleted: false,
+      updatedTime: 100 + index,
+      body: 'web layout result',
+    })));
+    await searchFor('web');
+
+    const shell = document.querySelector('.sub-pages-shell');
+    const list = document.querySelector('.sub-pages-list.is-search-results');
+    const localTree = list?.querySelector('.sub-pages-tree');
+    const external = document.querySelector('.sub-pages-search-results');
+    const externalTree = external?.querySelector('.sub-pages-external-results');
+    const localRect = localTree?.getBoundingClientRect();
+    const listRect = list?.getBoundingClientRect();
+    const externalRect = external?.getBoundingClientRect();
+    const externalTreeRect = externalTree?.getBoundingClientRect();
+    const localRows = list ? [...list.querySelectorAll('.sub-pages-row')].length : 0;
+    const externalRows = external ? [...external.querySelectorAll('.sub-pages-row')].length : 0;
+    const externalRowsInOrder = external
+      ? [...external.querySelectorAll('.sub-pages-row')].every((row, index, rows) => {
+        const rect = row.getBoundingClientRect();
+        return rect.height > 0 && (!index || rect.top >= rows[index - 1].getBoundingClientRect().bottom - 1);
+      })
+      : false;
+
+    document.querySelector('.sub-pages-clear-search')?.click();
+    await new Promise(requestAnimationFrame);
+
+    return {
+      hasSearchList: !!list,
+      childTransition,
+      localRows,
+      externalRows,
+      externalRowsInOrder,
+      listHeight: listRect?.height,
+      localTreeHeight: localRect?.height,
+      treeToExternalGap: externalRect && localRect ? externalRect.top - localRect.bottom : null,
+      externalTreeHeight: externalTreeRect?.height,
+      shellScrollHeight: shell?.scrollHeight,
+      shellClientHeight: shell?.clientHeight,
+      shellOverflowY: shell ? getComputedStyle(shell).overflowY : null,
+    };
+  })()`);
+  if (!searchLayout.hasSearchList || searchLayout.localRows !== 1 || searchLayout.externalRows !== 13) {
+    throw new Error(`Search layout fixture did not render the expected local and external results: ${JSON.stringify(searchLayout)}`);
+  }
+  if (searchLayout.childTransition.localRows < 3 || searchLayout.childTransition.hasExternalResults) {
+    throw new Error(`Search transitions did not replace external results for the new query: ${JSON.stringify(searchLayout)}`);
+  }
+  if (!Number.isFinite(searchLayout.listHeight)
+    || !Number.isFinite(searchLayout.localTreeHeight)
+    || !Number.isFinite(searchLayout.treeToExternalGap)
+    || Math.abs(searchLayout.listHeight - searchLayout.localTreeHeight) > 1
+    || searchLayout.treeToExternalGap < 0
+    || searchLayout.treeToExternalGap > 16) {
+    throw new Error(`Search results were stretched, squished, or separated from Other notebooks: ${JSON.stringify(searchLayout)}`);
+  }
+  if (!searchLayout.externalRowsInOrder
+    || !Number.isFinite(searchLayout.externalTreeHeight)
+    || !Number.isFinite(searchLayout.shellScrollHeight)
+    || !Number.isFinite(searchLayout.shellClientHeight)
+    || searchLayout.externalTreeHeight <= 0
+    || searchLayout.shellScrollHeight <= searchLayout.shellClientHeight
+    || !['auto', 'scroll'].includes(searchLayout.shellOverflowY)) {
+    throw new Error(`Long search results did not remain visible in a scrollable panel: ${JSON.stringify(searchLayout)}`);
+  }
+  await setViewport(360);
+
   const notebookScopeSearch = await evalJs(`(async () => {
     document.querySelector('button[data-action="setSearchScope"][data-scope="notebook"]').click();
     await new Promise(requestAnimationFrame);
@@ -503,7 +600,7 @@ async function main() {
     throw new Error(`Responsive All Notes header layout failed: ${JSON.stringify(allNotesLayoutFailures)}`);
   }
 
-  console.log(JSON.stringify({ responsive, search, noResults, bodySearch, notebookScopeSearch, dragPayloads, multiSelect, confirmUnlink, dragDrop, invalidDragDrop, menuKeys, treeKeys, allNotes, allNotesResponsive }, null, 2));
+  console.log(JSON.stringify({ responsive, search, noResults, bodySearch, searchLayout, notebookScopeSearch, dragPayloads, multiSelect, confirmUnlink, dragDrop, invalidDragDrop, menuKeys, treeKeys, allNotes, allNotesResponsive }, null, 2));
   cdp.close();
 }
 

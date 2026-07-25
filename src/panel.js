@@ -173,6 +173,7 @@
         const list = element('div', {
           className: [
             'sub-pages-list',
+            search.active ? 'is-search-results' : '',
             showRootDropArea ? 'sub-pages-root-drop-zone' : '',
             draggedNoteId && showRootDropArea ? 'is-visible' : '',
             dropToRootActive && showRootDropArea ? 'is-drop-target' : '',
