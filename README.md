@@ -35,13 +35,14 @@ Semantic search uses the index managed by Joplin. The panel reports when that in
 
 ## Setup in Joplin
 
-1. Build the plugin with `npm run dist`.
-2. Open Joplin Desktop and go to **Tools > Options > Plugins**.
-3. Use the gear menu and choose **Install from file**, then select `publish/com.codex.subPages.jpl`.
-4. Restart Joplin.
-5. Open the panel with **View > Toggle Sub-Pages panel** or the Sub-Pages toolbar button.
+1. Open Joplin Desktop and go to **Tools > Options > Plugins**.
+2. Use the gear menu and choose **Install from file**, then select the checked-in `publish/net.sverd.subPages.jpl` archive.
+3. Restart Joplin.
+4. Open the panel with **View > Toggle Sub-Pages panel** or the Sub-Pages toolbar button.
 
-The validated development build (`dist/`) and installable package (`publish/com.codex.subPages.jpl`) are versioned in this repository. On a computer already configured to load this repository's `dist/` directory as a Joplin development plugin, `git pull` followed by a Joplin restart loads the current build. A plugin installed from the `.jpl` is copied into Joplin's plugin directory, so reinstall it from the updated file after pulling.
+The validated development build (`dist/`) and installable package (`publish/net.sverd.subPages.jpl`) are versioned in this repository, so installing the checked-in archive does not require a build. To build from source, run `npm run dist`. On a computer already configured to load this repository's `dist/` directory as a Joplin development plugin, `git pull` followed by a Joplin restart loads the current build. A plugin installed from the `.jpl` is copied into Joplin's plugin directory, so reinstall it from the updated file after pulling.
+
+The plugin ID changed from `com.codex.subPages` to `net.sverd.subPages`. Joplin treats this as a new plugin: uninstall the old Sub-Pages entry before enabling this one. Hierarchy links are stored on notes and remain intact; plugin settings do not automatically transfer.
 
 ## Appearance settings
 
@@ -89,7 +90,7 @@ npm install
 npm run dist
 ```
 
-The built plugin is written to `publish/com.codex.subPages.jpl`.
+The built plugin is written to `publish/net.sverd.subPages.jpl`.
 
 For local testing in Joplin Desktop, add this repository's `dist/` directory to **Options -> Plugins -> Development plugins** and restart Joplin.
 

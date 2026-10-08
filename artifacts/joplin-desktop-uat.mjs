@@ -140,7 +140,7 @@ async function main() {
   const targetsResponse = await getJson('/json/list');
   const targets = targetsResponse.value || targetsResponse;
   const mainTarget = targets.find(target => target.title === 'Joplin' && target.url.endsWith('/index.html'));
-  const pluginTarget = targets.find(target => target.url.includes('pluginId=com.codex.subPages'));
+  const pluginTarget = targets.find(target => target.url.includes('pluginId=net.sverd.subPages'));
   assert(mainTarget, 'Joplin main target not found.', targets);
   assert(pluginTarget, 'Sub-Pages plugin background target not found.', targets);
 
@@ -481,7 +481,7 @@ async function main() {
     assert(original.showSaveDialogType === 'function', 'Joplin runtime does not expose a native save dialog API.', original);
     record('verified native save dialog API is available');
 
-    const installedPluginDir = path.join(os.homedir(), '.config', 'joplin-desktop', 'cache', 'com.codex.subPages');
+    const installedPluginDir = path.join(os.homedir(), '.config', 'joplin-desktop', 'cache', 'net.sverd.subPages');
     const installedPluginEntry = await Promise.any([
       fs.readFile(path.join(installedPluginDir, 'index.js'), 'utf8'),
       fs.readFile(path.join(installedPluginDir, 'main.js'), 'utf8'),

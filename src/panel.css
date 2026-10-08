@@ -212,6 +212,7 @@ body {
 }
 
 .sub-pages-tree {
+  background-color: inherit;
   display: flex;
   flex-direction: column;
   flex: 0 0 auto;

@@ -10,7 +10,7 @@ dist/*
 !dist/panel.css
 !dist/panel.js
 publish/*
-!publish/com.codex.subPages.jpl
+!publish/net.sverd.subPages.jpl
 
 # Generated UAT/debug artifacts. Keep the browser smoke harness tracked.
 artifacts/*

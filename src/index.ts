@@ -47,7 +47,7 @@ const NOTE_LIST_PARITY_COMMANDS = new Set([
   'showNoteProperties',
 ]);
 
-const PLUGIN_ID = 'com.codex.subPages';
+const PLUGIN_ID = 'net.sverd.subPages';
 const PANEL_ID = `${PLUGIN_ID}.panel`;
 const DIALOG_MOVE_PARENT_PREFIX = 'subPages.moveParentDialog';
 const DIALOG_MOVE_BRANCH_TO_FOLDER_PREFIX = 'subPages.moveBranchToFolderDialog';
