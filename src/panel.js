@@ -2,6 +2,9 @@
   const app = document.getElementById('app');
   const api = window.webviewApi;
   const collapsedIds = new Set();
+  let collapsedStateLoaded = false;
+  let collapsedStateDirty = false;
+  let collapsedStateSaveQueue = Promise.resolve();
   const panelSelectedIds = new Set();
   let currentState = null;
   let searchQuery = '';
@@ -72,6 +75,15 @@
 
     if (response.state) {
       if (!acceptStateRevision(response.revision)) return;
+      if (!collapsedStateLoaded && Array.isArray(response.collapsedNoteIds)) {
+        if (!collapsedStateDirty) {
+          collapsedIds.clear();
+          response.collapsedNoteIds.forEach((noteId) => {
+            if (typeof noteId === 'string' && noteId) collapsedIds.add(noteId);
+          });
+        }
+        collapsedStateLoaded = true;
+      }
       currentState = response.state;
       applyPanelAppearance();
       normalizeSearchScopeForView();
@@ -161,6 +173,29 @@
   function postQuiet(name, payload) {
     if (!api || typeof api.postMessage !== 'function') return;
     Promise.resolve(api.postMessage(Object.assign({ name }, payload || {}))).catch(() => {});
+  }
+
+  function persistCollapsedState() {
+    if (!api || typeof api.postMessage !== 'function') return;
+    const collapsedNoteIds = [...collapsedIds];
+    collapsedStateSaveQueue = collapsedStateSaveQueue
+      .catch(() => {})
+      .then(() => api.postMessage({ name: 'saveCollapsedNoteIds', collapsedNoteIds }))
+      .catch(() => {});
+  }
+
+  function setCollapsed(noteId, isCollapsed) {
+    if (!noteId || collapsedIds.has(noteId) === isCollapsed) return false;
+    collapsedStateDirty = true;
+    if (isCollapsed) collapsedIds.add(noteId);
+    else collapsedIds.delete(noteId);
+    render();
+    persistCollapsedState();
+    return true;
+  }
+
+  function toggleCollapsed(noteId) {
+    setCollapsed(noteId, !collapsedIds.has(noteId));
   }
 
   function isRowDragActive() {
@@ -459,6 +494,7 @@
 
     const hasChildren = hasNodeChildren(node);
     const hasVisibleChildren = visibleChildren.length > 0;
+    // Filtering reveals matching notes and their ancestors without changing the saved collapse set.
     const isCollapsed = !filtering && collapsedIds.has(node.id);
     if (hasChildren) row.setAttribute('aria-expanded', isCollapsed ? 'false' : 'true');
     row.classList.add(isCollapsed ? 'is-collapsed' : 'is-expanded');
@@ -1075,9 +1111,7 @@
         setStatus('Clear search to change collapse state.');
         return;
       }
-      if (collapsedIds.has(noteId)) collapsedIds.delete(noteId);
-      else collapsedIds.add(noteId);
-      render();
+      toggleCollapsed(noteId);
       return;
     }
 
@@ -1402,9 +1436,8 @@
     const noteId = row.dataset.noteId;
     if (!noteId) return;
 
-    if (collapsedIds.has(noteId)) {
-      collapsedIds.delete(noteId);
-      render();
+    if (!normalizedSearchQuery() && row.getAttribute('aria-expanded') === 'false' && collapsedIds.has(noteId)) {
+      setCollapsed(noteId, false);
       focusRowByNoteId(noteId);
       return;
     }
@@ -1421,9 +1454,8 @@
     const noteId = row.dataset.noteId;
     if (!noteId) return;
 
-    if (row.getAttribute('aria-expanded') === 'true') {
-      collapsedIds.add(noteId);
-      render();
+    if (!normalizedSearchQuery() && row.getAttribute('aria-expanded') === 'true') {
+      setCollapsed(noteId, true);
       focusRowByNoteId(noteId);
       return;
     }

@@ -61,6 +61,7 @@ const SETTING_PANEL_ROW_SPACING = 'subPages.panelRowSpacing';
 const SETTING_PANEL_ROW_VERTICAL_PADDING = 'subPages.panelRowVerticalPadding';
 const SETTING_PANEL_TEXT_INSET = 'subPages.panelTextInset';
 const SETTING_PANEL_NOTE_INDENT = 'subPages.panelNoteIndent';
+const SETTING_PANEL_COLLAPSED_NOTE_IDS = 'subPages.panelCollapsedNoteIds';
 
 const PARENT_ID_KEY = 'subPages.parentId';
 const CHILD_IDS_KEY = 'subPages.childIds';
@@ -221,6 +222,8 @@ let lastPostedSelectedNoteId: string | null = null;
 let hasPostedSelectedNoteId = false;
 let settledRefreshTimers: any[] = [];
 let panelStateRevision = 0;
+let collapsedNoteIds: string[] = [];
+let collapsedNoteIdsWriteQueue: Promise<void> = Promise.resolve();
 let lastPanelFolderId: string | null | undefined = undefined;
 let lastPanelViewKey: string | undefined = undefined;
 let lastValidViewContext: JoplinViewContext | null = null;
@@ -240,6 +243,7 @@ let nativeDragReconcileTimers: any[] = [];
 joplin.plugins.register({
   onStart: async () => {
     await registerSettings();
+    await loadCollapsedNoteIds();
     await registerCommands();
     await registerMenus();
     await registerPanel();
@@ -324,7 +328,34 @@ async function registerSettings(): Promise<void> {
       maximum: PANEL_APPEARANCE_LIMITS.noteIndent.maximum,
       step: 1,
     },
+    [SETTING_PANEL_COLLAPSED_NOTE_IDS]: {
+      value: [],
+      type: SettingItemType.Array,
+      public: false,
+      label: 'Collapsed note IDs',
+      description: 'Internal state for restoring collapsed notes in the Sub-Pages panel.',
+    },
   });
+}
+
+async function loadCollapsedNoteIds(): Promise<void> {
+  try {
+    const values = await joplin.settings.values([SETTING_PANEL_COLLAPSED_NOTE_IDS]);
+    collapsedNoteIds = normalizeIdArray(values[SETTING_PANEL_COLLAPSED_NOTE_IDS]);
+  } catch (error) {
+    collapsedNoteIds = [];
+    console.error('Sub-Pages could not load collapsed note state', error);
+  }
+}
+
+async function saveCollapsedNoteIds(value: any): Promise<void> {
+  collapsedNoteIds = normalizeIdArray(value);
+  const snapshot = [...collapsedNoteIds];
+  const write = collapsedNoteIdsWriteQueue
+    .catch(() => undefined)
+    .then(() => joplin.settings.setValue(SETTING_PANEL_COLLAPSED_NOTE_IDS, snapshot));
+  collapsedNoteIdsWriteQueue = write;
+  await write;
 }
 
 async function registerCommands(): Promise<void> {
@@ -589,6 +620,11 @@ async function handlePanelMessage(message: any): Promise<any> {
       return panelStateResponse();
     }
 
+    if (name === 'saveCollapsedNoteIds') {
+      await saveCollapsedNoteIds(message?.collapsedNoteIds);
+      return { ok: true };
+    }
+
     if (name === 'refresh') {
       lastPrivateViewVerificationAt = 0;
       invalidateWhiteboardCandidates();
@@ -786,6 +822,7 @@ async function panelStateResponse(message?: string, selectedNoteIdOverride?: str
   const response: any = {
     ok: true,
     revision: panelStateRevision,
+    collapsedNoteIds: [...collapsedNoteIds],
     state: await buildPanelState(selectedNoteIdOverride),
   };
   if (message) response.message = message;

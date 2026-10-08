@@ -10,6 +10,7 @@ Sub-Pages adds a hierarchical page tree panel to Joplin. The panel follows the a
 - The default panel sort is **Recent groups**, which uses a page's own update time plus descendant updates so recently edited child pages lift their parent group.
 - Panel search combines Joplin keyword results with semantic results when Joplin's AI index is available. It falls back to keyword results when semantic search is disabled, unavailable, preparing, or fails.
 - In a notebook view, search can target that notebook or all notebooks, with external notebook matches shown separately. In **All Notes**, search always covers all notes.
+- Search reveals matching pages and their ancestor rows even when those ancestors are collapsed. Clearing search restores the saved collapse state.
 - Panel actions:
   - Create root page
   - Create root whiteboard
@@ -54,7 +55,7 @@ Because of that, this plugin uses these v1 behaviors:
 
 - The panel is the authoritative hierarchy UI; the native note list remains unchanged.
 - The custom panel supports hierarchy drag/drop within the panel and native note-drag payloads from the panel to Joplin's notebook sidebar. Dragging from Joplin's native note list into Sub-Pages to create hierarchy links is not implemented.
-- Collapse state is local to the panel and does not sync.
+- Collapse state is remembered between Joplin launches in local plugin settings and does not sync to other devices.
 - Parent and child links are notebook-local. **All Notes** combines each notebook's hierarchy into one display but does not permit cross-notebook parent links.
 - Mobile clients without the plugin still show ordinary Joplin notes. The hierarchy is invisible but harmless.
 - The plugin does not rewrite `note.order`.
