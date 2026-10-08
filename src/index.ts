@@ -58,6 +58,9 @@ const SETTINGS_SECTION = 'subPages';
 const SETTING_PANEL_SORT_MODE = 'subPages.panelSortMode';
 const SETTING_PANEL_NOTE_TEXT_SIZE = 'subPages.panelNoteTextSize';
 const SETTING_PANEL_ROW_SPACING = 'subPages.panelRowSpacing';
+const SETTING_PANEL_ROW_VERTICAL_PADDING = 'subPages.panelRowVerticalPadding';
+const SETTING_PANEL_TEXT_INSET = 'subPages.panelTextInset';
+const SETTING_PANEL_NOTE_INDENT = 'subPages.panelNoteIndent';
 
 const PARENT_ID_KEY = 'subPages.parentId';
 const CHILD_IDS_KEY = 'subPages.childIds';
@@ -282,10 +285,43 @@ async function registerSettings(): Promise<void> {
       type: SettingItemType.Int,
       section: SETTINGS_SECTION,
       public: true,
-      label: 'Vertical spacing between note rows (px)',
-      description: 'Adds vertical breathing room to note rows in the Sub-Pages panel, including search results.',
+      label: 'Spacing between note rows (px)',
+      description: 'Sets the vertical gap between note cards in the Sub-Pages panel, including search results.',
       minimum: PANEL_APPEARANCE_LIMITS.rowSpacing.minimum,
       maximum: PANEL_APPEARANCE_LIMITS.rowSpacing.maximum,
+      step: 1,
+    },
+    [SETTING_PANEL_ROW_VERTICAL_PADDING]: {
+      value: PANEL_APPEARANCE_DEFAULTS.rowVerticalPadding,
+      type: SettingItemType.Int,
+      section: SETTINGS_SECTION,
+      public: true,
+      label: 'Vertical padding within note cards (px)',
+      description: 'Adds equal space above and below each note title. This increases card height without changing the gap between cards.',
+      minimum: PANEL_APPEARANCE_LIMITS.rowVerticalPadding.minimum,
+      maximum: PANEL_APPEARANCE_LIMITS.rowVerticalPadding.maximum,
+      step: 1,
+    },
+    [SETTING_PANEL_TEXT_INSET]: {
+      value: PANEL_APPEARANCE_DEFAULTS.textInset,
+      type: SettingItemType.Int,
+      section: SETTINGS_SECTION,
+      public: true,
+      label: 'Text inset within note rows (px)',
+      description: 'Sets the left space between each note card edge and its title. Hierarchy is controlled by note indentation.',
+      minimum: PANEL_APPEARANCE_LIMITS.textInset.minimum,
+      maximum: PANEL_APPEARANCE_LIMITS.textInset.maximum,
+      step: 1,
+    },
+    [SETTING_PANEL_NOTE_INDENT]: {
+      value: PANEL_APPEARANCE_DEFAULTS.noteIndent,
+      type: SettingItemType.Int,
+      section: SETTINGS_SECTION,
+      public: true,
+      label: 'Note indentation per level (px)',
+      description: 'Sets how far each child note card is inset from its parent card.',
+      minimum: PANEL_APPEARANCE_LIMITS.noteIndent.minimum,
+      maximum: PANEL_APPEARANCE_LIMITS.noteIndent.maximum,
       step: 1,
     },
   });
@@ -526,6 +562,9 @@ async function registerRefreshEvents(): Promise<void> {
       SETTING_PANEL_SORT_MODE,
       SETTING_PANEL_NOTE_TEXT_SIZE,
       SETTING_PANEL_ROW_SPACING,
+      SETTING_PANEL_ROW_VERTICAL_PADDING,
+      SETTING_PANEL_TEXT_INSET,
+      SETTING_PANEL_NOTE_INDENT,
     ].includes(key))) {
       markPanelStateChanged();
       schedulePanelRefresh(0);
@@ -1272,10 +1311,16 @@ async function panelAppearance(): Promise<PanelAppearance> {
     const values = await joplin.settings.values([
       SETTING_PANEL_NOTE_TEXT_SIZE,
       SETTING_PANEL_ROW_SPACING,
+      SETTING_PANEL_ROW_VERTICAL_PADDING,
+      SETTING_PANEL_TEXT_INSET,
+      SETTING_PANEL_NOTE_INDENT,
     ]);
     return normalizePanelAppearance({
       noteTextSize: values[SETTING_PANEL_NOTE_TEXT_SIZE],
       rowSpacing: values[SETTING_PANEL_ROW_SPACING],
+      rowVerticalPadding: values[SETTING_PANEL_ROW_VERTICAL_PADDING],
+      textInset: values[SETTING_PANEL_TEXT_INSET],
+      noteIndent: values[SETTING_PANEL_NOTE_INDENT],
     });
   } catch {
     return { ...PANEL_APPEARANCE_DEFAULTS };

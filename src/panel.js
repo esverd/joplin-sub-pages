@@ -23,11 +23,17 @@
   const searchDebounceMs = 380;
   const selectionPollMs = 1500;
   const statePollMs = 1000;
-  const defaultPanelAppearance = Object.freeze({ noteTextSize: 12, rowSpacing: 0 });
+  const defaultPanelAppearance = Object.freeze({ noteTextSize: 12, rowSpacing: 3, rowVerticalPadding: 0, textInset: 4, noteIndent: 16 });
   const minimumPanelNoteTextSize = 10;
   const maximumPanelNoteTextSize = 24;
   const minimumPanelRowSpacing = 0;
-  const maximumPanelRowSpacing = 24;
+  const maximumPanelRowSpacing = 16;
+  const minimumPanelRowVerticalPadding = 0;
+  const maximumPanelRowVerticalPadding = 12;
+  const minimumPanelTextInset = 0;
+  const maximumPanelTextInset = 24;
+  const minimumPanelNoteIndent = 0;
+  const maximumPanelNoteIndent = 40;
   const joplinNoteDragType = 'text/x-jop-note-ids';
 
   const icons = {
@@ -112,14 +118,34 @@
         minimumPanelRowSpacing,
         maximumPanelRowSpacing,
       ),
+      rowVerticalPadding: boundedInteger(
+        appearance && appearance.rowVerticalPadding,
+        defaultPanelAppearance.rowVerticalPadding,
+        minimumPanelRowVerticalPadding,
+        maximumPanelRowVerticalPadding,
+      ),
+      textInset: boundedInteger(
+        appearance && appearance.textInset,
+        defaultPanelAppearance.textInset,
+        minimumPanelTextInset,
+        maximumPanelTextInset,
+      ),
+      noteIndent: boundedInteger(
+        appearance && appearance.noteIndent,
+        defaultPanelAppearance.noteIndent,
+        minimumPanelNoteIndent,
+        maximumPanelNoteIndent,
+      ),
     };
   }
 
   function applyPanelAppearance() {
     const appearance = panelAppearanceFromState();
     app.style.setProperty('--sub-pages-note-font-size', `${appearance.noteTextSize}px`);
-    app.style.setProperty('--sub-pages-row-extra-spacing', `${appearance.rowSpacing}px`);
-    app.style.setProperty('--sub-pages-row-half-spacing', `${appearance.rowSpacing / 2}px`);
+    app.style.setProperty('--sub-pages-row-spacing', `${appearance.rowSpacing}px`);
+    app.style.setProperty('--sub-pages-row-vertical-padding', `${appearance.rowVerticalPadding}px`);
+    app.style.setProperty('--sub-pages-text-inset', `${appearance.textInset}px`);
+    app.style.setProperty('--sub-pages-note-indent', `${appearance.noteIndent}px`);
   }
 
   function setBusy(value) {
@@ -440,8 +466,6 @@
 
     if (hasChildren) {
       main.appendChild(iconButton('toggle', node.id, isCollapsed ? 'chevronRight' : 'chevronDown', filtering ? 'Collapse state is preserved while filtering' : (isCollapsed ? 'Expand' : 'Collapse'), false, 'sub-pages-icon-button sub-pages-toggle'));
-    } else if (depth > 0) {
-      main.appendChild(element('span', { className: 'sub-pages-spacer' }));
     }
 
     main.appendChild(renderPageTitle(node, search));

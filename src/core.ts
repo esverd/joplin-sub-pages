@@ -11,16 +11,25 @@ export type SemanticSearchScope = { type: 'all' } | { type: 'folder'; folderId: 
 export interface PanelAppearance {
   noteTextSize: number;
   rowSpacing: number;
+  rowVerticalPadding: number;
+  textInset: number;
+  noteIndent: number;
 }
 
 export const PANEL_APPEARANCE_DEFAULTS = Object.freeze({
   noteTextSize: 12,
-  rowSpacing: 0,
+  rowSpacing: 3,
+  rowVerticalPadding: 0,
+  textInset: 4,
+  noteIndent: 16,
 });
 
 export const PANEL_APPEARANCE_LIMITS = Object.freeze({
   noteTextSize: Object.freeze({ minimum: 10, maximum: 24 }),
-  rowSpacing: Object.freeze({ minimum: 0, maximum: 24 }),
+  rowSpacing: Object.freeze({ minimum: 0, maximum: 16 }),
+  rowVerticalPadding: Object.freeze({ minimum: 0, maximum: 12 }),
+  textInset: Object.freeze({ minimum: 0, maximum: 24 }),
+  noteIndent: Object.freeze({ minimum: 0, maximum: 40 }),
 });
 
 function boundedRoundedInteger(value: unknown, fallback: number, minimum: number, maximum: number): number {
@@ -47,6 +56,24 @@ export function normalizePanelAppearance(value: unknown): PanelAppearance {
       PANEL_APPEARANCE_DEFAULTS.rowSpacing,
       PANEL_APPEARANCE_LIMITS.rowSpacing.minimum,
       PANEL_APPEARANCE_LIMITS.rowSpacing.maximum,
+    ),
+    rowVerticalPadding: boundedRoundedInteger(
+      appearance.rowVerticalPadding,
+      PANEL_APPEARANCE_DEFAULTS.rowVerticalPadding,
+      PANEL_APPEARANCE_LIMITS.rowVerticalPadding.minimum,
+      PANEL_APPEARANCE_LIMITS.rowVerticalPadding.maximum,
+    ),
+    textInset: boundedRoundedInteger(
+      appearance.textInset,
+      PANEL_APPEARANCE_DEFAULTS.textInset,
+      PANEL_APPEARANCE_LIMITS.textInset.minimum,
+      PANEL_APPEARANCE_LIMITS.textInset.maximum,
+    ),
+    noteIndent: boundedRoundedInteger(
+      appearance.noteIndent,
+      PANEL_APPEARANCE_DEFAULTS.noteIndent,
+      PANEL_APPEARANCE_LIMITS.noteIndent.minimum,
+      PANEL_APPEARANCE_LIMITS.noteIndent.maximum,
     ),
   };
 }

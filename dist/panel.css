@@ -41,8 +41,10 @@ body {
 
 #app {
   --sub-pages-note-font-size: 12px;
-  --sub-pages-row-extra-spacing: 0px;
-  --sub-pages-row-half-spacing: 0px;
+  --sub-pages-row-spacing: 3px;
+  --sub-pages-row-vertical-padding: 0px;
+  --sub-pages-text-inset: 4px;
+  --sub-pages-note-indent: 16px;
 }
 
 .sub-pages-loading,
@@ -180,6 +182,7 @@ body {
 }
 
 .sub-pages-list {
+  background-color: var(--joplin-background-color, #fff);
   display: flex;
   flex: 1 1 0;
   flex-direction: column;
@@ -187,6 +190,16 @@ body {
   min-height: 0;
   min-width: 0;
   width: 100%;
+}
+
+@supports (background-color: color-mix(in srgb, black 4%, white)) {
+  .sub-pages-list {
+    background-color: color-mix(
+      in srgb,
+      var(--joplin-background-color, #fff) 92%,
+      var(--joplin-color, #222) 8%
+    );
+  }
 }
 
 /*
@@ -202,6 +215,7 @@ body {
   display: flex;
   flex-direction: column;
   flex: 0 0 auto;
+  gap: var(--sub-pages-row-spacing, 3px);
   max-width: 100%;
   min-width: 0;
   width: 100%;
@@ -209,17 +223,28 @@ body {
 
 .sub-pages-row {
   align-items: center;
-  border-bottom: 1px solid var(--joplin-divider-color, rgba(127, 127, 127, 0.16));
+  background-color: var(--joplin-background-color, #fff);
+  border: 1px solid var(--joplin-divider-color, rgba(127, 127, 127, 0.2));
   border-radius: 4px;
   display: grid;
   gap: 4px;
   grid-template-columns: minmax(0, 1fr);
-  min-height: calc(20px + var(--sub-pages-row-extra-spacing));
+  min-height: 20px;
   min-width: 0;
-  /* Half on each edge makes the configured spacing additive between rows. */
-  padding: var(--sub-pages-row-half-spacing) 2px var(--sub-pages-row-half-spacing) calc(4px + var(--depth) * 12px);
+  margin-left: calc(var(--depth) * var(--sub-pages-note-indent, 16px));
+  padding: var(--sub-pages-row-vertical-padding, 0px) 2px var(--sub-pages-row-vertical-padding, 0px) var(--sub-pages-text-inset, 4px);
   position: relative;
-  width: 100%;
+  width: calc(100% - var(--depth) * var(--sub-pages-note-indent, 16px));
+}
+
+@supports (border-color: color-mix(in srgb, black 4%, white)) {
+  .sub-pages-row {
+    border-color: color-mix(
+      in srgb,
+      var(--joplin-divider-color, rgba(127, 127, 127, 0.2)) 55%,
+      var(--joplin-background-color, #fff) 45%
+    );
+  }
 }
 
 .sub-pages-row[draggable="true"] {
@@ -229,25 +254,6 @@ body {
 .sub-pages-row.is-dragging {
   cursor: grabbing;
   opacity: 0.58;
-}
-
-.sub-pages-row.is-child::before {
-  border-left: 1px solid var(--joplin-divider-color, rgba(127, 127, 127, 0.28));
-  bottom: -1px;
-  content: "";
-  left: calc(var(--depth) * 12px - 3px);
-  position: absolute;
-  top: -1px;
-}
-
-.sub-pages-row.is-child::after {
-  border-top: 1px solid var(--joplin-divider-color, rgba(127, 127, 127, 0.28));
-  content: "";
-  left: calc(var(--depth) * 12px - 3px);
-  position: absolute;
-  top: 50%;
-  transform: translateY(-50%);
-  width: 10px;
 }
 
 .sub-pages-row-main {
@@ -305,11 +311,6 @@ body {
 .sub-pages-spacer {
   flex: 0 0 18px;
   height: 18px;
-}
-
-.sub-pages-row.is-child:not(.has-children) .sub-pages-spacer {
-  flex-basis: 8px;
-  width: 8px;
 }
 
 .sub-pages-button {

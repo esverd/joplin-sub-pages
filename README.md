@@ -44,7 +44,7 @@ The validated development build (`dist/`) and installable package (`publish/com.
 
 ## Appearance settings
 
-In **Tools > Options > Sub-Pages**, you can set the note-title text size (10-24 px) and vertical spacing between note rows (0-24 px). Both apply immediately to normal panel rows and search results.
+In **Tools > Options > Sub-Pages**, you can set the note-title text size (10-24 px), spacing between note rows (0-16 px), vertical padding within note cards (0-12 px), text inset within each note card (0-24 px), and card indentation per hierarchy level (0-40 px). These settings apply immediately to normal panel rows and search results.
 
 ## Important Limitations
 
@@ -60,6 +60,12 @@ Because of that, this plugin uses these v1 behaviors:
 - The plugin does not rewrite `note.order`.
 - The panel row menu is a custom webview menu, not Joplin's native note-list context menu. Other plugins can still add entries to Joplin's native note-list context menu, and Sub-Pages adds its own native context-menu entries there, but third-party plugin commands do not automatically appear inside the Sub-Pages panel menu. Use **Command palette...** from a panel row to select the note and open Joplin's command palette for native and plugin commands.
 - Joplin 3.7.9 does not expose the active **All Notes**/notebook note-list parent through its public plugin API. Sub-Pages isolates a version-specific adapter for this state and shows a compatibility warning if it cannot mirror the current Joplin view.
+
+## Privacy
+
+Sub-Pages runs inside Joplin and reads note IDs, titles, notebook membership, timestamps, to-do state, and Sub-Pages hierarchy metadata through Joplin's plugin APIs to build and sort the panel. Keyword searches use Joplin's data API. When Joplin reports its AI index as ready or indexing, Sub-Pages also submits the search query and selected scope to Joplin's AI search API; AI processing follows your Joplin AI configuration.
+
+The plugin may read candidate note bodies to validate JSONCanvas whiteboards; an explicit Markdown export reads the selected note body and writes it to the local file path you choose. Linking pages writes the synced Sub-Pages hierarchy metadata described below. Other note changes happen when you use actions such as creating or moving notes. The plugin code makes no direct HTTP requests, and note content is not included in the plugin package.
 
 ## Sync Behavior
 
