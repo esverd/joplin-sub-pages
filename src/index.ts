@@ -10,6 +10,8 @@ import {
   ViewScope,
   classifyJoplinViewState,
   groupIdsByParent,
+  inferMissingParentIdsFromChildLinks,
+  inlineUserDataValueFromPlugins,
   isWhiteboardBody,
   mainWindowStateFromRoot,
   normalizePanelAppearance,
@@ -48,6 +50,7 @@ const NOTE_LIST_PARITY_COMMANDS = new Set([
 ]);
 
 const PLUGIN_ID = 'net.sverd.subPages';
+const LEGACY_PLUGIN_ID = 'com.codex.subPages';
 const PANEL_ID = `${PLUGIN_ID}.panel`;
 const DIALOG_MOVE_PARENT_PREFIX = 'subPages.moveParentDialog';
 const DIALOG_MOVE_BRANCH_TO_FOLDER_PREFIX = 'subPages.moveBranchToFolderDialog';
@@ -152,6 +155,7 @@ interface SearchExternalResult {
 interface HierarchyMeta {
   parentId: string | null;
   childIds: string[];
+  parentLinkKnown: boolean;
 }
 
 interface TreeNode {
@@ -188,8 +192,9 @@ interface FolderCandidate {
 }
 
 interface RepairOperation {
-  type: 'clearParentId' | 'setChildIds' | 'clearChildIds';
+  type: 'clearParentId' | 'setParentId' | 'setChildIds' | 'clearChildIds';
   noteId: string;
+  parentId?: string;
   childIds?: string[];
 }
 
@@ -1365,9 +1370,11 @@ async function panelAppearance(): Promise<PanelAppearance> {
 }
 
 async function buildTree(notes: NoteSummary[], sortMode: PanelSortMode): Promise<TreeBuildResult> {
+  await migrateLegacyHierarchyMetadata(notes);
   const noteMap = toNoteMap(notes);
   const metaMap = await buildMetaMap(notes);
-  const cycleAffectedIds = cycleAffectedNoteIds(notes, metaMap, noteMap);
+  const treeMetaMap = metaMapWithInferredParents(notes, metaMap);
+  const cycleAffectedIds = cycleAffectedNoteIds(notes, treeMetaMap, noteMap);
   const metadataItemCount = metadataItemCountFor(metaMap);
   const externalParentReasons = await externalParentRepairReasons(notes, noteMap, metaMap);
   const repairOperations = repairOperationsForNotes(notes, noteMap, metaMap, externalParentReasons, cycleAffectedIds);
@@ -1375,7 +1382,7 @@ async function buildTree(notes: NoteSummary[], sortMode: PanelSortMode): Promise
   const repairReasons = new Map<string, string>();
 
   for (const note of notes) {
-    const meta = metaMap.get(note.id) ?? emptyMeta();
+    const meta = treeMetaMap.get(note.id) ?? emptyMeta();
     const parentId = meta.parentId;
 
     if (!parentId) {
@@ -2033,6 +2040,9 @@ async function repairCurrentNotebookMetadata(): Promise<number | null> {
   for (const operation of operations) {
     if (operation.type === 'clearParentId') {
       if (await clearParentIdIfExists(operation.noteId)) changes += 1;
+    } else if (operation.type === 'setParentId' && operation.parentId) {
+      await setParentId(operation.noteId, operation.parentId);
+      changes += 1;
     } else if (operation.type === 'clearChildIds') {
       if (await clearChildIds(operation.noteId)) changes += 1;
     } else if (operation.type === 'setChildIds' && operation.childIds) {
@@ -2054,7 +2064,7 @@ async function repairOperationsForCurrentView(context?: JoplinViewContext): Prom
   const notes = context.viewScope === 'all' ? await listAllNotes() : await listNotebookNotes(context.folder!.id);
   const noteMap = toNoteMap(notes);
   const metaMap = await buildMetaMap(notes);
-  const cycleAffectedIds = cycleAffectedNoteIds(notes, metaMap, noteMap);
+  const cycleAffectedIds = cycleAffectedNoteIds(notes, metaMapWithInferredParents(notes, metaMap), noteMap);
   const externalReasons = await externalParentRepairReasons(notes, noteMap, metaMap);
   return repairOperationsForNotes(notes, noteMap, metaMap, externalReasons, cycleAffectedIds);
 }
@@ -2068,10 +2078,12 @@ function repairOperationsForNotes(
 ): RepairOperation[] {
   const effectiveParentIds = new Map<string, string | null>();
   const operations: RepairOperation[] = [];
+  const inferredParentById = inferredParentIds(notes, metaMap);
 
   for (const note of notes) {
     const meta = metaMap.get(note.id) ?? emptyMeta();
     const parentId = meta.parentId;
+    const inferredParentId = inferredParentById.get(note.id) ?? null;
     const invalidParent = !!parentId && (
       parentId === note.id
       || !noteMap.has(parentId)
@@ -2082,6 +2094,11 @@ function repairOperationsForNotes(
 
     if (invalidParent) {
       operations.push({ type: 'clearParentId', noteId: note.id });
+      effectiveParentIds.set(note.id, null);
+    } else if (!parentId && inferredParentId && !cycleAffectedIds.has(note.id)) {
+      operations.push({ type: 'setParentId', noteId: note.id, parentId: inferredParentId });
+      effectiveParentIds.set(note.id, inferredParentId);
+    } else if (!parentId && inferredParentId && cycleAffectedIds.has(note.id)) {
       effectiveParentIds.set(note.id, null);
     } else {
       effectiveParentIds.set(note.id, parentId);
@@ -2648,15 +2665,41 @@ async function buildMetaMap(notes: NoteSummary[]): Promise<Map<string, Hierarchy
 }
 
 function metaFromNote(note: NoteSummary): HierarchyMeta {
+  const inlineParentId = inlineUserDataValue(note.user_data, PARENT_ID_KEY);
   return {
-    parentId: inlineParentId(note),
+    parentId: typeof inlineParentId === 'string' && inlineParentId ? inlineParentId : null,
     childIds: inlineChildIds(note),
+    parentLinkKnown: inlineParentId !== undefined,
   };
 }
 
-function inlineParentId(note: NoteSummary): string | null {
-  const value = inlineUserDataValue(note.user_data, PARENT_ID_KEY);
-  return typeof value === 'string' && value ? value : null;
+function inferredParentIds(notes: NoteSummary[], metaMap: Map<string, HierarchyMeta>): Map<string, string | null> {
+  return inferMissingParentIdsFromChildLinks(notes.map((note) => {
+    const meta = metaMap.get(note.id) ?? emptyMeta();
+    return {
+      id: note.id,
+      notebookId: note.parent_id,
+      parentId: meta.parentId,
+      parentLinkKnown: meta.parentLinkKnown,
+      childIds: meta.childIds,
+    };
+  }));
+}
+
+function metaMapWithInferredParents(
+  notes: NoteSummary[],
+  metaMap: Map<string, HierarchyMeta>,
+): Map<string, HierarchyMeta> {
+  const inferredParentById = inferredParentIds(notes, metaMap);
+  const output = new Map(metaMap);
+
+  for (const note of notes) {
+    const meta = metaMap.get(note.id) ?? emptyMeta();
+    const parentId = inferredParentById.get(note.id) ?? null;
+    if (parentId !== meta.parentId) output.set(note.id, { ...meta, parentId });
+  }
+
+  return output;
 }
 
 function inlineChildIds(note: NoteSummary): string[] {
@@ -2664,16 +2707,32 @@ function inlineChildIds(note: NoteSummary): string[] {
 }
 
 function inlineUserDataValue(userData: unknown, key: string): unknown {
-  const data = parseInlineUserData(userData);
-  if (!data) return undefined;
+  return inlineUserDataValueFromPlugins(userData, key, [PLUGIN_ID, LEGACY_PLUGIN_ID]);
+}
 
-  const pluginData = parseInlineUserData(data[PLUGIN_ID]);
-  if (pluginData) {
-    const pluginValue = inlineUserDataEntryValue(pluginData[key]);
-    if (pluginValue !== undefined) return pluginValue;
+async function migrateLegacyHierarchyMetadata(notes: NoteSummary[]): Promise<void> {
+  for (const note of notes) {
+    const data = parseInlineUserData(note.user_data);
+    const legacyData = data && parseInlineUserData(data[LEGACY_PLUGIN_ID]);
+    if (!legacyData) continue;
+
+    const currentData = data && parseInlineUserData(data[PLUGIN_ID]);
+    for (const key of [PARENT_ID_KEY, CHILD_IDS_KEY]) {
+      if (currentData && inlineUserDataEntryValue(currentData[key]) !== undefined) continue;
+
+      const legacyValue = inlineUserDataEntryValue(legacyData[key]);
+      const value = key === PARENT_ID_KEY
+        ? (typeof legacyValue === 'string' && legacyValue ? legacyValue : null)
+        : normalizeIds(legacyValue);
+      if (value === null || (Array.isArray(value) && !value.length)) continue;
+
+      try {
+        await joplin.data.userDataSet(ModelType.Note, note.id, key, value);
+      } catch (error) {
+        console.warn('Sub-Pages: unable to migrate legacy hierarchy metadata', note.id, key, error);
+      }
+    }
   }
-
-  return inlineUserDataEntryValue(data[key]);
 }
 
 function inlineUserDataEntryValue(value: unknown): unknown {
@@ -2708,13 +2767,14 @@ function parseInlineUserData(value: unknown): Record<string, unknown> | null {
 async function getMeta(noteId: string): Promise<HierarchyMeta> {
   const parentId = await getParentId(noteId);
   const childIds = await getChildIds(noteId);
-  return { parentId, childIds };
+  return { parentId, childIds, parentLinkKnown: parentId !== null };
 }
 
 function emptyMeta(): HierarchyMeta {
   return {
     parentId: null,
     childIds: [],
+    parentLinkKnown: false,
   };
 }
 

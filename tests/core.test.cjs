@@ -17,6 +17,8 @@ const {
   EMPTY_WHITEBOARD_BODY,
   classifyJoplinViewState,
   groupIdsByParent,
+  inferMissingParentIdsFromChildLinks,
+  inlineUserDataValueFromPlugins,
   isWhiteboardBody,
   mainWindowStateFromRoot,
   normalizePanelAppearance,
@@ -61,23 +63,105 @@ test('semantic search follows the selected panel scope', () => {
 });
 
 test('normalizes panel appearance defaults, bounds, and persisted values', () => {
-  assert.deepEqual(normalizePanelAppearance(null), { noteTextSize: 12, rowSpacing: 0 });
-  assert.deepEqual(normalizePanelAppearance({ noteTextSize: Number.NaN, rowSpacing: 'not a number' }), {
+  const defaults = {
     noteTextSize: 12,
-    rowSpacing: 0,
-  });
-  assert.deepEqual(normalizePanelAppearance({ noteTextSize: '18.4', rowSpacing: 12.6 }), {
+    rowSpacing: 3,
+    rowVerticalPadding: 0,
+    textInset: 4,
+    noteIndent: 16,
+  };
+  assert.deepEqual(normalizePanelAppearance(null), defaults);
+  assert.deepEqual(normalizePanelAppearance({
+    noteTextSize: Number.NaN,
+    rowSpacing: 'not a number',
+    rowVerticalPadding: undefined,
+    textInset: null,
+    noteIndent: '',
+  }), defaults);
+  assert.deepEqual(normalizePanelAppearance({
+    noteTextSize: '18.4',
+    rowSpacing: 12.6,
+    rowVerticalPadding: '5.2',
+    textInset: 7.7,
+    noteIndent: '24',
+  }), {
     noteTextSize: 18,
     rowSpacing: 13,
+    rowVerticalPadding: 5,
+    textInset: 8,
+    noteIndent: 24,
   });
-  assert.deepEqual(normalizePanelAppearance({ noteTextSize: 2, rowSpacing: -5 }), {
+  assert.deepEqual(normalizePanelAppearance({
+    noteTextSize: 2,
+    rowSpacing: -5,
+    rowVerticalPadding: -1,
+    textInset: -2,
+    noteIndent: -3,
+  }), {
     noteTextSize: 10,
     rowSpacing: 0,
+    rowVerticalPadding: 0,
+    textInset: 0,
+    noteIndent: 0,
   });
-  assert.deepEqual(normalizePanelAppearance({ noteTextSize: 99, rowSpacing: 99 }), {
+  assert.deepEqual(normalizePanelAppearance({
+    noteTextSize: 99,
+    rowSpacing: 99,
+    rowVerticalPadding: 99,
+    textInset: 99,
+    noteIndent: 99,
+  }), {
     noteTextSize: 24,
-    rowSpacing: 24,
+    rowSpacing: 16,
+    rowVerticalPadding: 12,
+    textInset: 24,
+    noteIndent: 40,
   });
+});
+
+test('reads hierarchy metadata from the current or previous plugin namespace', () => {
+  const userData = JSON.stringify({
+    'com.codex.subPages': {
+      'subPages.parentId': { v: 'legacy-parent' },
+      'subPages.childIds': { v: ['legacy-child'] },
+    },
+    'net.sverd.subPages': {
+      'subPages.childIds': { v: ['current-child'] },
+    },
+  });
+
+  const pluginIds = ['net.sverd.subPages', 'com.codex.subPages'];
+  assert.equal(inlineUserDataValueFromPlugins(userData, 'subPages.parentId', pluginIds), 'legacy-parent');
+  assert.deepEqual(inlineUserDataValueFromPlugins(userData, 'subPages.childIds', pluginIds), ['current-child']);
+});
+
+test('does not revive a legacy hierarchy value when the current namespace has a tombstone', () => {
+  const userData = {
+    'com.codex.subPages': { 'subPages.parentId': { v: 'legacy-parent' } },
+    'net.sverd.subPages': { 'subPages.parentId': { v: 0, d: 1 } },
+  };
+
+  assert.equal(
+    inlineUserDataValueFromPlugins(userData, 'subPages.parentId', ['net.sverd.subPages', 'com.codex.subPages']),
+    0,
+  );
+});
+
+test('recovers a missing child backlink from one same-notebook parent child list', () => {
+  const parentById = inferMissingParentIdsFromChildLinks([
+    { id: 'root', notebookId: 'notebook-a', parentId: null, parentLinkKnown: true, childIds: ['child', 'explicit-root', 'ambiguous'] },
+    { id: 'child', notebookId: 'notebook-a', parentId: null, parentLinkKnown: false, childIds: [] },
+    { id: 'explicit-root', notebookId: 'notebook-a', parentId: null, parentLinkKnown: true, childIds: [] },
+    { id: 'other-notebook-root', notebookId: 'notebook-b', parentId: null, parentLinkKnown: true, childIds: ['cross-notebook'] },
+    { id: 'cross-notebook', notebookId: 'notebook-a', parentId: null, parentLinkKnown: false, childIds: [] },
+    { id: 'second-root', notebookId: 'notebook-a', parentId: null, parentLinkKnown: true, childIds: ['ambiguous'] },
+    { id: 'ambiguous', notebookId: 'notebook-a', parentId: null, parentLinkKnown: false, childIds: [] },
+  ]);
+
+  assert.equal(parentById.get('child'), 'root');
+  assert.equal(parentById.get('explicit-root'), null);
+  assert.equal(parentById.get('cross-notebook'), null);
+  assert.equal(parentById.get('ambiguous'), null);
 });
 
 test('groups a large flat note set by parent in one pass', () => {

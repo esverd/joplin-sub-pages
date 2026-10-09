@@ -243,29 +243,36 @@ async function main() {
     const originalState = window.mockNotebookState;
     const baselineState = {
       ...originalState,
-      appearance: { noteTextSize: 18, rowSpacing: 0 },
+      appearance: { noteTextSize: 18, rowSpacing: 0, rowVerticalPadding: 0, textInset: 4, noteIndent: 16 },
     };
     const updatedState = {
       ...originalState,
-      appearance: { noteTextSize: 18, rowSpacing: 12 },
+      appearance: { noteTextSize: 18, rowSpacing: 12, rowVerticalPadding: 6, textInset: 9, noteIndent: 24 },
     };
     const staleState = {
       ...originalState,
-      appearance: { noteTextSize: 10, rowSpacing: 0 },
+      appearance: { noteTextSize: 10, rowSpacing: 0, rowVerticalPadding: 0, textInset: 0, noteIndent: 0 },
     };
     const originalPostMessage = window.webviewApi.postMessage;
     const readAppearance = () => {
       const row = document.querySelector('.sub-pages-row[data-note-id="child1"]');
+      const grandchild = document.querySelector('.sub-pages-row[data-note-id="grandchild1"]');
       const title = row?.querySelector('.sub-pages-note-title');
       const app = document.getElementById('app');
+      const tree = document.querySelector('.sub-pages-tree');
       return {
         noteFontSize: title ? getComputedStyle(title).fontSize : null,
         rowHeight: row?.getBoundingClientRect().height ?? null,
         rowPaddingTop: row ? getComputedStyle(row).paddingTop : null,
         rowPaddingBottom: row ? getComputedStyle(row).paddingBottom : null,
         appNoteFontSize: app?.style.getPropertyValue('--sub-pages-note-font-size') || null,
-        appRowSpacing: app?.style.getPropertyValue('--sub-pages-row-extra-spacing') || null,
-        appRowHalfSpacing: app?.style.getPropertyValue('--sub-pages-row-half-spacing') || null,
+        appRowSpacing: app?.style.getPropertyValue('--sub-pages-row-spacing') || null,
+        appRowVerticalPadding: app?.style.getPropertyValue('--sub-pages-row-vertical-padding') || null,
+        appTextInset: app?.style.getPropertyValue('--sub-pages-text-inset') || null,
+        appNoteIndent: app?.style.getPropertyValue('--sub-pages-note-indent') || null,
+        treeGap: tree ? getComputedStyle(tree).rowGap : null,
+        childMarginLeft: row ? getComputedStyle(row).marginLeft : null,
+        grandchildMarginLeft: grandchild ? getComputedStyle(grandchild).marginLeft : null,
         childConnectorTop: row ? getComputedStyle(row, '::after').top : null,
       };
     };
@@ -313,24 +320,160 @@ async function main() {
   if (appearanceUpdate.updated.noteFontSize !== '18px'
     || appearanceUpdate.updated.appNoteFontSize !== '18px'
     || appearanceUpdate.updated.appRowSpacing !== '12px'
-    || appearanceUpdate.updated.appRowHalfSpacing !== '6px'
+    || appearanceUpdate.updated.appRowVerticalPadding !== '6px'
+    || appearanceUpdate.updated.appTextInset !== '9px'
+    || appearanceUpdate.updated.appNoteIndent !== '24px'
+    || appearanceUpdate.updated.treeGap !== '12px'
     || appearanceUpdate.updated.rowPaddingTop !== '6px'
     || appearanceUpdate.updated.rowPaddingBottom !== '6px'
+    || appearanceUpdate.updated.childMarginLeft !== '24px'
+    || appearanceUpdate.updated.grandchildMarginLeft !== '48px'
     || !Number.isFinite(appearanceUpdate.baseline.rowHeight)
     || !Number.isFinite(appearanceUpdate.updated.rowHeight)
     || appearanceUpdate.updated.rowHeight - appearanceUpdate.baseline.rowHeight < 11
     || appearanceUpdate.updated.childConnectorTop !== '50%'
     || appearanceUpdate.afterStaleMessage.appNoteFontSize !== '18px'
     || appearanceUpdate.afterStaleMessage.appRowSpacing !== '12px'
+    || appearanceUpdate.afterStaleMessage.appNoteIndent !== '24px'
     || appearanceUpdate.afterStaleResponse.appNoteFontSize !== '18px'
     || appearanceUpdate.afterStaleResponse.appRowSpacing !== '12px'
+    || appearanceUpdate.afterStaleResponse.appNoteIndent !== '24px'
     || appearanceUpdate.restored.appNoteFontSize !== '12px'
     || appearanceUpdate.restored.appRowSpacing !== '0px'
-    || appearanceUpdate.restored.appRowHalfSpacing !== '0px') {
+    || appearanceUpdate.restored.appRowVerticalPadding !== '0px'
+    || appearanceUpdate.restored.appTextInset !== '4px'
+    || appearanceUpdate.restored.appNoteIndent !== '16px') {
     throw new Error(`Panel appearance settings did not update safely: ${JSON.stringify(appearanceUpdate)}`);
   }
 
+  await setViewport(360, 220);
+  const longTreeAppearance = await evalJs(`(async () => {
+    const originalState = window.mockNotebookState;
+    const makeNode = (id, title, parentId, children = []) => ({
+      id, title, parentId, notebookId: 'f1', notebookTitle: 'Harness', pageType: 'note',
+      isTodo: false, todoCompleted: false, repairReason: null, canMoveUp: false, canMoveDown: false, children,
+    });
+    const nodes = Array.from({ length: 18 }, (_, index) => {
+      const rootId = 'long-root-' + index;
+      const childId = 'long-child-' + index;
+      const grandchildId = 'long-grandchild-' + index;
+      return makeNode(rootId, 'Long root ' + index, null, [
+        makeNode(childId, 'Long child ' + index, rootId, [
+          makeNode(grandchildId, 'Long grandchild ' + index, childId),
+        ]),
+      ]);
+    });
+    const state = {
+      ...originalState,
+      selectedNoteId: 'long-grandchild-0',
+      noteCount: 54,
+      appearance: { noteTextSize: 12, rowSpacing: 3, rowVerticalPadding: 1, textInset: 4, noteIndent: 20 },
+      nodes,
+    };
+    window.mockNotebookState = state;
+    window.mockState = state;
+    window.receive({ name: 'state', revision: 13, state });
+    await new Promise(requestAnimationFrame);
+
+    const shell = document.querySelector('.sub-pages-shell');
+    const list = document.querySelector('.sub-pages-list');
+    const tree = list?.querySelector('.sub-pages-tree');
+    const row = (id) => document.querySelector('.sub-pages-row[data-note-id="' + id + '"]');
+    const treeBackground = tree ? getComputedStyle(tree).backgroundColor : null;
+    const listBackground = list ? getComputedStyle(list).backgroundColor : null;
+    const shellBackground = shell ? getComputedStyle(shell).backgroundColor : null;
+    const rootIndent = row('long-root-0') ? getComputedStyle(row('long-root-0')).marginLeft : null;
+    const childIndent = row('long-child-0') ? getComputedStyle(row('long-child-0')).marginLeft : null;
+    const grandchildIndent = row('long-grandchild-0') ? getComputedStyle(row('long-grandchild-0')).marginLeft : null;
+    const shellClientHeight = shell?.clientHeight ?? 0;
+    const treeHeight = tree?.getBoundingClientRect().height ?? 0;
+
+    if (shell) {
+      shell.scrollTop = shell.scrollHeight;
+      await new Promise(requestAnimationFrame);
+    }
+
+    const shellRect = shell?.getBoundingClientRect();
+    const lastRowRect = row('long-grandchild-' + 17)?.getBoundingClientRect();
+    const result = {
+      rowCount: list?.querySelectorAll('.sub-pages-row').length ?? 0,
+      shellScrollHeight: shell?.scrollHeight ?? 0,
+      shellClientHeight,
+      scrollTop: shell?.scrollTop ?? 0,
+      treeHeight,
+      treeBackground,
+      listBackground,
+      shellBackground,
+      rootIndent,
+      childIndent,
+      grandchildIndent,
+      lastRowVisible: !!(shellRect && lastRowRect
+        && lastRowRect.top >= shellRect.top - 1
+        && lastRowRect.bottom <= shellRect.bottom + 1),
+    };
+    window.mockNotebookState = originalState;
+    window.mockState = originalState;
+    window.receive({ name: 'state', revision: 14, state: originalState });
+    await new Promise(requestAnimationFrame);
+    return result;
+  })()`);
+  if (longTreeAppearance.rowCount !== 54
+    || longTreeAppearance.shellScrollHeight <= longTreeAppearance.shellClientHeight
+    || longTreeAppearance.scrollTop <= 0
+    || longTreeAppearance.treeHeight <= longTreeAppearance.shellClientHeight
+    || longTreeAppearance.treeBackground !== longTreeAppearance.listBackground
+    || longTreeAppearance.treeBackground === longTreeAppearance.shellBackground
+    || longTreeAppearance.rootIndent !== '0px'
+    || longTreeAppearance.childIndent !== '20px'
+    || longTreeAppearance.grandchildIndent !== '40px'
+    || !longTreeAppearance.lastRowVisible) {
+    throw new Error(`Long-list background, scrolling, or hierarchy indentation failed: ${JSON.stringify(longTreeAppearance)}`);
+  }
+
   await setViewport(360);
+  const collapsedSearch = await evalJs(`(async () => {
+    window.messages.length = 0;
+    const parent = document.querySelector('.sub-pages-row[data-note-id="parent1"]');
+    const toggle = parent?.querySelector('[data-action="toggle"]');
+    if (!toggle) throw new Error('Parent fixture is missing its collapse control.');
+    toggle.click();
+    await new Promise(resolve => setTimeout(resolve, 20));
+    const collapsedBeforeSearch = document.querySelector('.sub-pages-row[data-note-id="parent1"]')?.getAttribute('aria-expanded') === 'false'
+      && !document.querySelector('.sub-pages-row[data-note-id="child1"]');
+    const savedCollapse = window.messages.find(message => message.name === 'saveCollapsedNoteIds');
+
+    const input = document.querySelector('.sub-pages-search-input');
+    input.focus();
+    input.value = 'Nested Child';
+    input.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: 'Nested Child' }));
+    await new Promise(resolve => setTimeout(resolve, 650));
+    const searchRows = [...document.querySelectorAll('.sub-pages-row')].map(row => row.dataset.noteId);
+    const ancestorsRevealed = JSON.stringify(searchRows) === JSON.stringify(['parent1', 'child1', 'grandchild1']);
+
+    document.querySelector('.sub-pages-clear-search').click();
+    await new Promise(requestAnimationFrame);
+    const collapseRestoredAfterSearch = document.querySelector('.sub-pages-row[data-note-id="parent1"]')?.getAttribute('aria-expanded') === 'false'
+      && !document.querySelector('.sub-pages-row[data-note-id="child1"]');
+
+    document.querySelector('.sub-pages-row[data-note-id="parent1"] [data-action="toggle"]').click();
+    await new Promise(requestAnimationFrame);
+    return {
+      collapsedBeforeSearch,
+      savedCollapseIds: savedCollapse?.collapsedNoteIds || [],
+      searchRows,
+      ancestorsRevealed,
+      collapseRestoredAfterSearch,
+      fixtureRestored: !!document.querySelector('.sub-pages-row[data-note-id="grandchild1"]'),
+    };
+  })()`);
+  if (!collapsedSearch.collapsedBeforeSearch
+    || !collapsedSearch.savedCollapseIds.includes('parent1')
+    || !collapsedSearch.ancestorsRevealed
+    || !collapsedSearch.collapseRestoredAfterSearch
+    || !collapsedSearch.fixtureRestored) {
+    throw new Error(`Search did not reveal a hidden descendant while preserving collapse state: ${JSON.stringify(collapsedSearch)}`);
+  }
+
   const search = await evalJs(`(async () => {
     const input = document.querySelector('.sub-pages-search-input');
     input.focus(); input.value = 'child'; input.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: 'child' }));
@@ -942,7 +1085,7 @@ async function main() {
     throw new Error(`Responsive All Notes header layout failed: ${JSON.stringify(allNotesLayoutFailures)}`);
   }
 
-  console.log(JSON.stringify({ responsive, appearanceUpdate, search, noResults, bodySearch, searchFixture, childTransition, pendingChildTransition, externalOnlyTransition, mixedTransition, mixedSearchLayouts, mixedSearchEnd, localOnlyTransition, localOnlyLayout, localOnlyEnd, denseExternalOnlyTransition, externalOnlyLayout, externalOnlyEnd, notebookScopeSearch, dragPayloads, multiSelect, confirmUnlink, dragDrop, invalidDragDrop, menuKeys, treeKeys, allNotes, allNotesResponsive }, null, 2));
+  console.log(JSON.stringify({ responsive, appearanceUpdate, longTreeAppearance, collapsedSearch, search, noResults, bodySearch, searchFixture, childTransition, pendingChildTransition, externalOnlyTransition, mixedTransition, mixedSearchLayouts, mixedSearchEnd, localOnlyTransition, localOnlyLayout, localOnlyEnd, denseExternalOnlyTransition, externalOnlyLayout, externalOnlyEnd, notebookScopeSearch, dragPayloads, multiSelect, confirmUnlink, dragDrop, invalidDragDrop, menuKeys, treeKeys, allNotes, allNotesResponsive }, null, 2));
   } finally {
     try {
       await cdp.send('Emulation.clearDeviceMetricsOverride');

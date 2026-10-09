@@ -78,6 +78,56 @@ export function normalizePanelAppearance(value: unknown): PanelAppearance {
   };
 }
 
+export function inlineUserDataValueFromPlugins(
+  userData: unknown,
+  key: string,
+  pluginIds: readonly string[],
+): unknown {
+  const data = parseInlineUserDataObject(userData);
+  if (!data) return undefined;
+
+  for (const pluginId of pluginIds) {
+    const pluginData = parseInlineUserDataObject(data[pluginId]);
+    if (!pluginData) continue;
+
+    const value = inlineUserDataEntryValue(pluginData[key]);
+    if (value !== undefined) return value;
+  }
+
+  return inlineUserDataEntryValue(data[key]);
+}
+
+function inlineUserDataEntryValue(value: unknown): unknown {
+  if (value && typeof value === 'object') {
+    const record = value as Record<string, unknown>;
+    if (Object.prototype.hasOwnProperty.call(record, 'value')) return record.value;
+    if (Object.prototype.hasOwnProperty.call(record, 'v')) return record.v;
+  }
+
+  return value;
+}
+
+function parseInlineUserDataObject(value: unknown): Record<string, unknown> | null {
+  if (!value) return null;
+  if (typeof value === 'object' && !Array.isArray(value)) return value as Record<string, unknown>;
+
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+
+    try {
+      const parsed: unknown = JSON.parse(trimmed);
+      return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+        ? parsed as Record<string, unknown>
+        : null;
+    } catch {
+      return null;
+    }
+  }
+
+  return null;
+}
+
 export interface ViewClassification {
   viewScope: ViewScope;
   folderId: string | null;
@@ -129,6 +179,46 @@ export function groupIdsByParent(ids: string[], parentById: ReadonlyMap<string, 
     output.set(parentId, childIds);
   }
   return output;
+}
+
+export interface ParentLinkForInference {
+  id: string;
+  notebookId: string;
+  parentId: string | null;
+  parentLinkKnown: boolean;
+  childIds: string[];
+}
+
+export function inferMissingParentIdsFromChildLinks(
+  notes: readonly ParentLinkForInference[],
+): Map<string, string | null> {
+  const noteById = new Map(notes.map((note) => [note.id, note]));
+  const candidateParentsByChild = new Map<string, Set<string>>();
+
+  for (const parent of notes) {
+    for (const childId of parent.childIds) {
+      const child = noteById.get(childId);
+      if (
+        !child
+        || child.id === parent.id
+        || child.notebookId !== parent.notebookId
+        || child.parentLinkKnown
+        || child.parentId
+      ) continue;
+
+      const candidates = candidateParentsByChild.get(childId) ?? new Set<string>();
+      candidates.add(parent.id);
+      candidateParentsByChild.set(childId, candidates);
+    }
+  }
+
+  return new Map(notes.map((note) => {
+    const candidates = candidateParentsByChild.get(note.id);
+    const inferredParent = !note.parentLinkKnown && candidates?.size === 1
+      ? [...candidates][0]
+      : null;
+    return [note.id, note.parentId ?? inferredParent];
+  }));
 }
 
 export function parentCycleAffectedIds(ids: string[], parentById: ReadonlyMap<string, string | null>): Set<string> {
